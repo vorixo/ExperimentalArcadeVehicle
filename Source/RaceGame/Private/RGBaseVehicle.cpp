@@ -1,0 +1,355 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "RGBaseVehicle.h"
+#include "CollisionQueryParams.h"
+
+static int32 bDebugInfo = 0;
+FAutoConsoleVariableRef CVARDebugPlayableArea(
+	TEXT("RG.DisplayDebugInfo"),
+	bDebugInfo,
+	TEXT("Draws in 3D space the vehicle information"),
+	ECVF_Cheat);
+
+// Sets default values
+ARGBaseVehicle::ARGBaseVehicle()
+{
+ 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	PrimaryActorTick.bCanEverTick = true;
+
+	// Custom Properties
+	SuspensionLength = 60.f;
+	SuspensionStiffness = 2.f;
+	SuspensionDampForce = 1250.f;
+	bIsMovingOnGround = false;
+	GravityAir = -980.0;
+	GravityGround = -980.0;
+	ScalarFrictionVal = 1.f;
+	GroundFriction = 8.f;
+	PredictiveLandingThresholdDistance = 500.f;
+	bStickyWheels = false;
+	AvgedNormals = FVector::OneVector;
+	LinearDampingGround = 0.5f;
+	LinearDampingAir = 0.01f;
+	AngularDampingGround = 10.0f;
+	AngularDampingAir = 0.01f;
+	EngineDecceleration = 1500.f;
+	MaxSpeed = 2000.0f;
+	CurrentThrottleAxis = 0.f;
+	CurrentBrakeAxis = 0.f;
+	bTiltedThrottle = true;
+	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
+	RGUpVector = FVector::ZeroVector;
+	RGRightVector = FVector::ZeroVector;
+	RGForwardVector = FVector::ZeroVector;
+
+	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
+	if (CollisionMesh)
+	{
+		CollisionMesh->SetSimulatePhysics(true);
+		CollisionMesh->SetMassOverrideInKg(NAME_None, 1.3f, true);
+		CollisionMesh->SetEnableGravity(false);
+		CollisionMesh->bReplicatePhysicsToAutonomousProxy = false;
+		CollisionMesh->SetCenterOfMass(FVector(0.f, 0.f, -20.f));
+		CollisionMesh->SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
+		RootComponent = CollisionMesh;
+	}
+	
+	// Component instanciation
+	BackRight = FVector(-75.f, 50.f, -25.f);
+	FrontRight = FVector(75.f, 50.f, -25.f);
+	FrontLeft = FVector(75.f, -50.f, -25.f);
+	BackLeft = FVector(-75.f, -50.f, -25.f);
+
+}
+
+
+/** Util for drawing result of single line trace  */
+void DrawDebugLineTraceSingle(const UWorld* World, const FVector& Start, const FVector& End, EDrawDebugTrace::Type DrawDebugType, bool bHit, const FHitResult& OutHit, FLinearColor TraceColor, FLinearColor TraceHitColor, float DrawTime)
+{
+	if (DrawDebugType != EDrawDebugTrace::None)
+	{
+		bool bPersistent = DrawDebugType == EDrawDebugTrace::Persistent;
+		float LifeTime = (DrawDebugType == EDrawDebugTrace::ForDuration) ? DrawTime : 0.f;
+
+		// @fixme, draw line with thickness = 2.f?
+		if (bHit && OutHit.bBlockingHit)
+		{
+			// Red up to the blocking hit, green thereafter
+			::DrawDebugLine(World, Start, OutHit.ImpactPoint, TraceColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugLine(World, OutHit.ImpactPoint, End, TraceHitColor.ToFColor(true), bPersistent, LifeTime);
+			::DrawDebugPoint(World, OutHit.ImpactPoint, 16.f, TraceColor.ToFColor(true), bPersistent, LifeTime);
+		}
+		else
+		{
+			// no hit means all red
+			::DrawDebugLine(World, Start, End, TraceColor.ToFColor(true), bPersistent, LifeTime);
+		}
+	}
+}
+
+
+
+// Called when the game starts or when spawned
+void ARGBaseVehicle::BeginPlay()
+{
+
+	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
+	if (PawnRootComponent != NULL) 
+	{
+		ImpactPoints.SetNum(4);
+		ImpactNormals.SetNum(4);
+		RootBodyInstance = PawnRootComponent->GetBodyInstance();
+	}
+
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		FPhysScene* PScene = World->GetPhysicsScene();
+		if (PScene)
+		{
+			// Register physics step delegate
+			OnPhysSceneStepHandle = PScene->OnPhysSceneStep.AddUObject(this, &ARGBaseVehicle::PhysSceneStep);
+		}
+	}
+	Super::BeginPlay();
+}
+
+
+// Called by OnCalculateCustomPhysics delegate when physics update is initiated
+void ARGBaseVehicle::PhysSceneStep(FPhysScene* PhysScene, float DeltaTime)
+{
+	PhysicsTick(DeltaTime);
+}
+
+
+void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
+{
+	if (!RootBodyInstance) return;
+
+	// Getting the transformation matrix of the object
+	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
+
+	// World Location
+	RGLocation = RGWorldTransform.GetLocation();
+	UKismetSystemLibrary::PrintString(this, RGLocation.ToString(), true, false, FColor::Red, SubstepDeltaTime);
+
+	// Getting the forward, right, and up vectors
+	RGForwardVector = RGWorldTransform.GetUnitAxis(EAxis::X);
+	RGRightVector = RGWorldTransform.GetUnitAxis(EAxis::Y);
+	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
+
+	// Calc velocities and Speed
+	CurrentHorizontalVelocity = FVector::VectorPlaneProject(RootBodyInstance->GetUnrealWorldVelocity(), RGUpVector);
+	UKismetSystemLibrary::PrintString(this, CurrentHorizontalVelocity.ToString(), true, false, FColor::Cyan, SubstepDeltaTime);
+	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
+
+	ApplySuspensionForces();
+
+	/************************************************************************/
+	/* Apply gravity and sliding forces                                     */
+	/************************************************************************/
+	const FVector GravityForce = bStickyWheels && bIsMovingOnGround ? RGUpVector * GravityGround : FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
+	RootBodyInstance->AddForce(GravityForce,false, false);
+
+	if (bIsMovingOnGround)
+	{
+		// Drag/Friction force
+		const FVector FrictionDragForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction)) * RGRightVector;
+		RootBodyInstance->AddForce(FrictionDragForce, false, false);
+	}
+	else
+	{
+		
+		// Predictive landing: FIXMEVORI: Linetrace doesn't cast when completely downwards
+		if (!bIsMovingOnGround && (FVector::DotProduct(RGUpVector, FVector::UpVector) < -0.2f)
+			&& (RootBodyInstance->GetUnrealWorldVelocity().IsNearlyZero(0.1) || RootBodyInstance->GetUnrealWorldVelocity().Z < 0.f))
+		{
+			FHitResult Hit(ForceInit);
+			static const FName HoverLineTraceName(TEXT("PredictiveLanding"));
+			FCollisionQueryParams TraceParams;
+			TraceParams.TraceTag = HoverLineTraceName;
+			TraceParams.bTraceComplex = false;
+			TraceParams.bReturnPhysicalMaterial = false;
+			TraceParams.AddIgnoredActor(this);
+			FVector const PredictiveLandingTraceEnd = RGLocation - FVector(0.f, 0.f, 1000.f);
+			bool const bHit = GetWorld()->LineTraceSingleByChannel(Hit, RGLocation, PredictiveLandingTraceEnd, ECC_Visibility, TraceParams);
+			#if ENABLE_DRAW_DEBUG
+			DrawDebugLineTraceSingle(GetWorld(), RGLocation, PredictiveLandingTraceEnd, EDrawDebugTrace::ForOneFrame, bHit, Hit, FColor::Red, FColor::Green, 5.f);
+			#endif
+
+			if (bHit && Hit.Distance < PredictiveLandingThresholdDistance)
+			{
+				const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, Hit.ImpactNormal) * 3000;
+				RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + FVector(0, 0, 100.f), false);
+			}
+		}
+		
+		// End Predictive landings
+	}
+	
+	/************************************************************************/
+	/* End apply gravity and sliding forces									*/
+	/************************************************************************/
+
+	SetDampingBasedOnGroundInfo();
+
+	// Throttle force adjustments based on Brake and forward axis values
+	const float ThrottleAdjustmentRatio = EngineDeccelerationCurve ? EngineDecceleration
+		* EngineDeccelerationCurve->GetFloatValue(FMath::Abs(CurrentHorizontalSpeed) / MaxSpeed)
+		* (1 - FMath::Abs(CurrentThrottleAxis + CurrentBrakeAxis))
+		* FMath::Sign(CurrentHorizontalSpeed) : 0.f;
+	ThrottleForce = ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio);
+
+
+	/************************************************************************/
+	/* Apply movement forces                                                */
+	/************************************************************************/
+	RootBodyInstance->AddTorqueInRadians(SteeringForce, false, true);
+	if (bTiltedThrottle)
+	{
+		RootBodyInstance->AddForceAtPosition(ThrottleForce, GetOffsetedCenterOfVehicle(), false, false);
+	}
+	else
+	{
+		RootBodyInstance->AddForce(ThrottleForce, false);
+	}
+	/************************************************************************/
+	/* End apply movement forces                                            */
+	/************************************************************************/
+
+	if (bDebugInfo > 0)
+	{
+		UKismetSystemLibrary::DrawDebugSphere(this, GetOffsetedCenterOfVehicle(), 10.f, 12);
+		UKismetSystemLibrary::DrawDebugSphere(this, RGLocation, 10.f, 12);
+		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed, 4));
+	}
+
+	// TODO: Vehicle Effects
+
+	ThrottleForce = FVector::ZeroVector;
+	SteeringForce = FVector::ZeroVector;
+}
+
+
+bool ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint, FVector& ImpactNormal)
+{
+	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
+	const FVector TraceEnd = TraceStart + (RGUpVector * (SuspensionLength * -1.f));
+	
+	FHitResult OutHit;
+	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
+	{
+		FVector LocalImpactPoint(ImpactPoint);
+		FVector LocalImpactNormal(ImpactNormal);
+		
+		if (OutHit.Distance > 0.f)
+		{
+			LocalImpactPoint = OutHit.ImpactPoint;
+			LocalImpactNormal = OutHit.ImpactNormal;
+		}
+
+		SuspensionRatio = 1 - (OutHit.Distance / SuspensionLength);
+
+		const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
+		const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
+		const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
+		RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
+
+		ImpactNormal = LocalImpactNormal;
+		ImpactPoint = LocalImpactPoint;
+
+#if ENABLE_DRAW_DEBUG
+		if(bDebugInfo) 
+		{
+			UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
+			if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio, 4), nullptr, FLinearColor::White, 0.f);
+		}
+#endif
+		return true;
+	}
+
+	return false;
+}
+
+
+void ARGBaseVehicle::ApplySuspensionForces()
+{
+	bIsMovingOnGround = (CalcSuspension(BackRight, ImpactPoints[0], ImpactNormals[0]) +
+		CalcSuspension(FrontRight, ImpactPoints[1], ImpactNormals[1]) +
+		CalcSuspension(FrontLeft, ImpactPoints[2], ImpactNormals[2]) +
+		CalcSuspension(BackLeft, ImpactPoints[3], ImpactNormals[3])) > 2;
+		
+	AvgedNormals = FVector::ZeroVector;
+	for (FVector v : ImpactNormals) AvgedNormals += v;
+	AvgedNormals /= ImpactNormals.Num();
+}
+
+
+bool ARGBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit)
+{
+	FHitResult Hit(ForceInit);
+	static const FName HoverLineTraceName(TEXT("HoverTrace"));
+	FCollisionQueryParams TraceParams;
+	TraceParams.TraceTag = HoverLineTraceName;
+	TraceParams.bTraceComplex = true;
+	TraceParams.bReturnPhysicalMaterial = false;
+	TraceParams.AddIgnoredActor(this);
+	bool const bHit = GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, TraceParams);
+#if ENABLE_DRAW_DEBUG
+	DrawDebugLineTraceSingle(GetWorld(), Start, End, DrawDebugType, bHit, OutHit, FColor::Red, FColor::Green, 5.f);
+#endif
+	return bHit;
+}
+
+
+void ARGBaseVehicle::SetDampingBasedOnGroundInfo()
+{
+
+	RootBodyInstance->LinearDamping = bIsMovingOnGround ? LinearDampingGround : LinearDampingAir;
+	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
+	RootBodyInstance->UpdateDampingProperties();
+}
+
+
+FVector ARGBaseVehicle::GetOffsetedCenterOfVehicle() const
+{
+	return (RGLocation - (RGUpVector * AccelerationCenterOfMassOffset.Y)) +
+		((RGForwardVector * (CurrentThrottleAxis + CurrentBrakeAxis)) * AccelerationCenterOfMassOffset.X);
+}
+
+
+FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveComponent)
+{
+	if (PrimitiveComponent == NULL) 
+	{
+		return NULL;
+	}
+	return PrimitiveComponent->GetBodyInstance();
+}
+
+
+// Called whenever this actor is being removed from a level
+void ARGBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UWorld* World = GetWorld();
+	if (World)
+	{
+		FPhysScene* PScene = World->GetPhysicsScene();
+		if (PScene)
+		{
+			// Unregister physics step delegate
+			PScene->OnPhysSceneStep.Remove(OnPhysSceneStepHandle);
+		}
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+
+// Called to bind functionality to input
+void ARGBaseVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
+{
+	Super::SetupPlayerInputComponent(PlayerInputComponent);
+
+}

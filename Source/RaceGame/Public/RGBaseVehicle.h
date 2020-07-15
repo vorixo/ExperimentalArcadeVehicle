@@ -54,6 +54,17 @@ public:
 	UFUNCTION()
 	FVector GetOffsetedCenterOfVehicle() const;
 
+	UFUNCTION()
+	void SetThrottleInput(float InputAxis);
+
+	UFUNCTION()
+	void SetSteeringInput(float InputAxis);
+
+	UFUNCTION()
+	void SetBrakeInput(float InputAxis);
+
+	UFUNCTION()
+	void ApplyInputStack();
 
 protected:
 	// Reference to MMTPawn root component
@@ -89,6 +100,9 @@ protected:
 
 	UPROPERTY()
 	float CurrentThrottleAxis;
+
+	UPROPERTY()
+	float CurrentSteeringAxis;
 
 	UPROPERTY()
 	float CurrentBrakeAxis;
@@ -174,7 +188,25 @@ public:
 	float MaxSpeed;
 
 	UPROPERTY(EditDefaultsOnly)
+	float MaxBackwardsSpeed;
+
+	UPROPERTY(EditDefaultsOnly)
+	float TorqueSpeed;
+
+	UPROPERTY(EditDefaultsOnly)
+	float VehicleAcceleration;
+
+	UPROPERTY(EditDefaultsOnly)
+	float BrakinDeceleration;
+
+	UPROPERTY(EditDefaultsOnly)
+	float BackwardsAcceleration;
+
+	UPROPERTY(EditDefaultsOnly)
 	UCurveFloat* EngineDeccelerationCurve;
+
+	UPROPERTY(EditDefaultsOnly)
+	UCurveFloat* SteeringActionCurve;
 
 	UPROPERTY(EditDefaultsOnly)
 	bool bTiltedThrottle;

@@ -38,6 +38,11 @@ ARGBaseVehicle::ARGBaseVehicle()
 	CurrentThrottleAxis = 0.f;
 	CurrentBrakeAxis = 0.f;
 	bTiltedThrottle = true;
+	VehicleAcceleration = 1500.f;
+	MaxBackwardsSpeed = 2000.f;
+	TorqueSpeed = 12.f;
+	BrakinDeceleration = 1500.f;
+	BackwardsAcceleration = 1500.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
@@ -132,16 +137,17 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 	// World Location
 	RGLocation = RGWorldTransform.GetLocation();
-	UKismetSystemLibrary::PrintString(this, RGLocation.ToString(), true, false, FColor::Red, SubstepDeltaTime);
 
 	// Getting the forward, right, and up vectors
 	RGForwardVector = RGWorldTransform.GetUnitAxis(EAxis::X);
 	RGRightVector = RGWorldTransform.GetUnitAxis(EAxis::Y);
 	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
 
+	// Input processing
+	ApplyInputStack();
+
 	// Calc velocities and Speed
 	CurrentHorizontalVelocity = FVector::VectorPlaneProject(RootBodyInstance->GetUnrealWorldVelocity(), RGUpVector);
-	UKismetSystemLibrary::PrintString(this, CurrentHorizontalVelocity.ToString(), true, false, FColor::Cyan, SubstepDeltaTime);
 	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
 
 	ApplySuspensionForces();
@@ -222,7 +228,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		UKismetSystemLibrary::DrawDebugSphere(this, GetOffsetedCenterOfVehicle(), 10.f, 12);
 		UKismetSystemLibrary::DrawDebugSphere(this, RGLocation, 10.f, 12);
-		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed, 4));
+		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed).Mid(0, 4), NULL,FLinearColor::Red);
 	}
 
 	// TODO: Vehicle Effects
@@ -263,7 +269,7 @@ bool ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint
 		if(bDebugInfo) 
 		{
 			UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
-			if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio, 4), nullptr, FLinearColor::White, 0.f);
+			if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio).Mid(0,4), nullptr, FLinearColor::White, 0.f);
 		}
 #endif
 		return true;
@@ -319,6 +325,61 @@ FVector ARGBaseVehicle::GetOffsetedCenterOfVehicle() const
 }
 
 
+void ARGBaseVehicle::SetThrottleInput(float InputAxis)
+{
+	CurrentThrottleAxis = InputAxis;
+}
+
+
+void ARGBaseVehicle::SetSteeringInput(float InputAxis)
+{
+	CurrentSteeringAxis = InputAxis;
+}
+
+
+void ARGBaseVehicle::SetBrakeInput(float InputAxis)
+{
+	CurrentBrakeAxis = InputAxis;
+}
+
+
+void ARGBaseVehicle::ApplyInputStack()
+{
+	// Throttle
+	if (CurrentThrottleAxis >= 0.1f && CurrentHorizontalSpeed <= MaxSpeed && bIsMovingOnGround)
+	{
+		ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * VehicleAcceleration * CurrentThrottleAxis;
+	}
+
+	// Steering
+	if (FMath::Abs(CurrentSteeringAxis) >= 0.1f)
+	{
+		const float AlphaInputTorque = SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f));
+		const float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
+		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
+		const float DirectionFactor = DirectionSign == 0 ? 1.f : DirectionSign;
+		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
+	}
+
+	// Braking
+	if (CurrentBrakeAxis <= -0.1 && bIsMovingOnGround)
+	{
+		if (FMath::Sign(CurrentHorizontalSpeed) <= 0.0)
+		{
+			if (FMath::Abs(CurrentHorizontalSpeed) <= MaxBackwardsSpeed)
+			{
+				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BackwardsAcceleration;
+			}
+		}
+		else
+		{
+			ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
+		}
+
+	}
+}
+
+
 FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveComponent)
 {
 	if (PrimitiveComponent == NULL) 
@@ -351,5 +412,7 @@ void ARGBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ARGBaseVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
-
+	PlayerInputComponent->BindAxis("MoveForward", this, &ARGBaseVehicle::SetThrottleInput);
+	PlayerInputComponent->BindAxis("MoveRight", this, &ARGBaseVehicle::SetSteeringInput);
+	PlayerInputComponent->BindAxis("Brake", this, &ARGBaseVehicle::SetBrakeInput);
 }

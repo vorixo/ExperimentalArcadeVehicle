@@ -66,6 +66,15 @@ public:
 	UFUNCTION()
 	void ApplyInputStack();
 
+	UFUNCTION(BlueprintPure)
+	float getMaxSpeed() const;
+
+	UFUNCTION(BlueprintPure)
+	float getMaxAcceleration() const;
+
+	UFUNCTION(BlueprintCallable)
+	void SetBoosting(bool inBoost);
+
 protected:
 	// Reference to MMTPawn root component
 	UPROPERTY()
@@ -128,6 +137,12 @@ protected:
 	UPROPERTY()
 	FTransform RGWorldTransform;
 
+	UPROPERTY()
+	FVector LastUpdateVelocity;
+
+	UPROPERTY()
+	bool bIsBoosting;
+
 public:
 
 	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
@@ -188,6 +203,9 @@ public:
 	float MaxSpeed;
 
 	UPROPERTY(EditDefaultsOnly)
+	float MaxSpeedBoosting;
+
+	UPROPERTY(EditDefaultsOnly)
 	float MaxBackwardsSpeed;
 
 	UPROPERTY(EditDefaultsOnly)
@@ -195,6 +213,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	float VehicleAcceleration;
+
+	UPROPERTY(EditDefaultsOnly)
+	float VehicleBoostAcceleration;
 
 	UPROPERTY(EditDefaultsOnly)
 	float BrakinDeceleration;

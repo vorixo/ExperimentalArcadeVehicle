@@ -29,16 +29,19 @@ ARGBaseVehicle::ARGBaseVehicle()
 	PredictiveLandingThresholdDistance = 500.f;
 	bStickyWheels = false;
 	AvgedNormals = FVector::OneVector;
-	LinearDampingGround = 0.5f;
+	LinearDampingGround = 0.1f;
 	LinearDampingAir = 0.01f;
 	AngularDampingGround = 10.0f;
-	AngularDampingAir = 0.01f;
+	AngularDampingAir = 5.f;
 	EngineDecceleration = 1500.f;
 	MaxSpeed = 2000.0f;
+	MaxSpeedBoosting = 3000.f;
+	bIsBoosting = false;
 	CurrentThrottleAxis = 0.f;
 	CurrentBrakeAxis = 0.f;
 	bTiltedThrottle = true;
 	VehicleAcceleration = 1500.f;
+	VehicleBoostAcceleration = 3000.f;
 	MaxBackwardsSpeed = 2000.f;
 	TorqueSpeed = 12.f;
 	BrakinDeceleration = 1500.f;
@@ -143,12 +146,15 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	RGRightVector = RGWorldTransform.GetUnitAxis(EAxis::Y);
 	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
 
-	// Input processing
-	ApplyInputStack();
 
 	// Calc velocities and Speed
 	CurrentHorizontalVelocity = FVector::VectorPlaneProject(RootBodyInstance->GetUnrealWorldVelocity(), RGUpVector);
 	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
+
+	// Input processing
+	ApplyInputStack();
+
+
 
 	ApplySuspensionForces();
 
@@ -161,9 +167,10 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (bIsMovingOnGround)
 	{
 		// Drag/Friction force
-		const FVector FrictionDragForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction)) * RGRightVector;
+		const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction)) * RGRightVector : FVector::ZeroVector;
 		RootBodyInstance->AddForce(FrictionDragForce, false, false);
 	}
+	/*
 	else
 	{
 		
@@ -193,7 +200,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		
 		// End Predictive landings
 	}
-	
+	*/
 	/************************************************************************/
 	/* End apply gravity and sliding forces									*/
 	/************************************************************************/
@@ -201,17 +208,28 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	SetDampingBasedOnGroundInfo();
 
 	// Throttle force adjustments based on Brake and forward axis values
-	const float ThrottleAdjustmentRatio = EngineDeccelerationCurve ? EngineDecceleration
-		* EngineDeccelerationCurve->GetFloatValue(FMath::Abs(CurrentHorizontalSpeed) / MaxSpeed)
-		* (1 - FMath::Abs(CurrentThrottleAxis + CurrentBrakeAxis))
-		* FMath::Sign(CurrentHorizontalSpeed) : 0.f;
-	ThrottleForce = ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio);
+	const float BrakeForwardAxisAdjusment = CurrentThrottleAxis + CurrentBrakeAxis;
+
+	if (!bIsBoosting)
+	{
+		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : EngineDecceleration
+			* EngineDeccelerationCurve->GetFloatValue(FMath::Abs(CurrentHorizontalSpeed) / getMaxSpeed())
+			* (1 - FMath::Abs(BrakeForwardAxisAdjusment))
+			* FMath::Sign(CurrentHorizontalSpeed);
+
+		ThrottleForce = bIsMovingOnGround ? ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio) : FVector::ZeroVector;
+	}
+
+	RootBodyInstance->LinearDamping = bIsMovingOnGround ? (BrakeForwardAxisAdjusment > KINDA_SMALL_NUMBER ? 0.f : LinearDampingGround) : LinearDampingAir;
+	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
+	RootBodyInstance->UpdateDampingProperties();
 
 
 	/************************************************************************/
 	/* Apply movement forces                                                */
 	/************************************************************************/
 	RootBodyInstance->AddTorqueInRadians(SteeringForce, false, true);
+	
 	if (bTiltedThrottle)
 	{
 		RootBodyInstance->AddForceAtPosition(ThrottleForce, GetOffsetedCenterOfVehicle(), false, false);
@@ -220,6 +238,8 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		RootBodyInstance->AddForce(ThrottleForce, false);
 	}
+	
+	
 	/************************************************************************/
 	/* End apply movement forces                                            */
 	/************************************************************************/
@@ -232,9 +252,9 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 
 	// TODO: Vehicle Effects
-
 	ThrottleForce = FVector::ZeroVector;
 	SteeringForce = FVector::ZeroVector;
+	LastUpdateVelocity = RootBodyInstance->GetUnrealWorldVelocity_AssumesLocked();
 }
 
 
@@ -346,9 +366,19 @@ void ARGBaseVehicle::SetBrakeInput(float InputAxis)
 void ARGBaseVehicle::ApplyInputStack()
 {
 	// Throttle
-	if (CurrentThrottleAxis >= 0.1f && CurrentHorizontalSpeed <= MaxSpeed && bIsMovingOnGround)
+	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting) && bIsMovingOnGround)
 	{
-		ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * VehicleAcceleration * CurrentThrottleAxis;
+		if (CurrentHorizontalSpeed <= getMaxSpeed())
+		{
+			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getMaxAcceleration() * MaxThrottleRatio;
+		}
+		else
+		{
+			// Natural limiting force (engine maxed out)
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * -getMaxAcceleration() * 1.2f;
+		}
+		
 	}
 
 	// Steering
@@ -362,7 +392,7 @@ void ARGBaseVehicle::ApplyInputStack()
 	}
 
 	// Braking
-	if (CurrentBrakeAxis <= -0.1 && bIsMovingOnGround)
+	if (CurrentBrakeAxis <= -0.1 && bIsMovingOnGround && !bIsBoosting)
 	{
 		if (FMath::Sign(CurrentHorizontalSpeed) <= 0.0)
 		{
@@ -380,6 +410,24 @@ void ARGBaseVehicle::ApplyInputStack()
 }
 
 
+float ARGBaseVehicle::getMaxSpeed() const
+{
+	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed;
+}
+
+
+float ARGBaseVehicle::getMaxAcceleration() const
+{
+	return bIsBoosting ? VehicleBoostAcceleration : VehicleAcceleration;
+}
+
+
+void ARGBaseVehicle::SetBoosting(bool inBoost)
+{
+	bIsBoosting = inBoost;
+}
+
+
 FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveComponent)
 {
 	if (PrimitiveComponent == NULL) 
@@ -388,7 +436,6 @@ FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveCom
 	}
 	return PrimitiveComponent->GetBodyInstance();
 }
-
 
 // Called whenever this actor is being removed from a level
 void ARGBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)

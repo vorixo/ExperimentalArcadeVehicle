@@ -397,12 +397,10 @@ void ARGBaseVehicle::ApplyGravityForce()
 	FVector GravityForce = FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
 	FVector CorrectionalUpVectorFlippingForce = FVector::UpVector;
 
-	if (bStickyWheels) {
-		if (bIsCloseToGround)
-		{
-			GravityForce = AvgedNormals * (bIsMovingOnGround ? GravityGround : GravityAir);
-			CorrectionalUpVectorFlippingForce = AvgedNormals;
-		}
+	if (bStickyWheels && bIsCloseToGround) 
+	{
+		GravityForce = AvgedNormals * (bIsMovingOnGround ? GravityGround : GravityAir);
+		CorrectionalUpVectorFlippingForce = AvgedNormals;	
 	}
 
 	// Roll towards Up Vector

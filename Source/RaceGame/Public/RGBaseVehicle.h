@@ -8,6 +8,33 @@
 #include "Engine/Public/DrawDebugHelpers.h"
 #include "RGBaseVehicle.generated.h"
 
+#define BACK_RIGHT 0
+#define FRONT_RIGHT 1
+#define FRONT_LEFT 2
+#define BACK_LEFT 3
+
+USTRUCT()
+struct RACEGAME_API FSuspensionHitInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+public:
+
+	UPROPERTY()
+	bool bWheelOnGround;
+
+	UPROPERTY()
+	bool bTraceHit;
+
+	FSuspensionHitInfo() : 
+		bWheelOnGround(false),
+		bTraceHit(false)
+			
+	{
+
+	}
+};
+
 UCLASS()
 class RACEGAME_API ARGBaseVehicle : public APawn
 {
@@ -39,8 +66,11 @@ public:
 	/* This event is called on every physics tick, including sub-steps. */
 	void PhysicsTick(float SubstepDeltaTime);
 
+	/**
+	/* Returns true if the wheel is within the suspension distance threshold (meaning it is in the ground)                                                                     
+	**/
 	UFUNCTION()
-	bool CalcSuspension(FVector HoverComponentOffset, FVector &ImpactPoint, FVector &ImpactNormal);
+	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FVector &ImpactPoint, FVector &ImpactNormal);
 
 	UFUNCTION()
 	void ApplySuspensionForces();
@@ -106,6 +136,9 @@ protected:
 
 	UPROPERTY()
 	bool bIsMovingOnGround;
+
+	UPROPERTY()
+	bool bIsCloseToGround;
 
 	UPROPERTY()
 	float CurrentThrottleAxis;

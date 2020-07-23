@@ -22,13 +22,15 @@ ARGBaseVehicle::ARGBaseVehicle()
 	SuspensionStiffness = 2.f;
 	SuspensionDampForce = 1250.f;
 	bIsMovingOnGround = false;
+	bIsCloseToGround = false;
 	GravityAir = -980.0;
 	GravityGround = -980.0;
 	ScalarFrictionVal = 1.f;
 	GroundFriction = 8.f;
 	AntiRollMaxForce = 2000.f;
 	bStickyWheels = false;
-	AvgedNormals = FVector::OneVector;
+	// Default to z grav
+	AvgedNormals = FVector::UpVector;
 	LinearDampingGround = 0.1f;
 	LinearDampingAir = 0.01f;
 	AngularDampingGround = 10.0f;
@@ -106,8 +108,8 @@ void ARGBaseVehicle::BeginPlay()
 	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
 	if (PawnRootComponent != NULL) 
 	{
-		ImpactPoints.SetNum(4);
-		ImpactNormals.SetNum(4);
+		ImpactPoints.Init(FVector::ZeroVector,4);
+		ImpactNormals.Init(FVector::ZeroVector,4);
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 	}
 
@@ -156,7 +158,6 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	ApplyInputStack();
 
 
-
 	ApplySuspensionForces();
 
 	/************************************************************************/
@@ -170,37 +171,8 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction)) * RGRightVector : FVector::ZeroVector;
 		RootBodyInstance->AddForce(FrictionDragForce, false, false);
 	}
-	/*
-	else
-	{
-		
-		// Predictive landing: FIXMEVORI: Linetrace doesn't cast when completely downwards
-		if (!bIsMovingOnGround && (FVector::DotProduct(RGUpVector, FVector::UpVector) < -0.2f)
-			&& (RootBodyInstance->GetUnrealWorldVelocity().IsNearlyZero(0.1) || RootBodyInstance->GetUnrealWorldVelocity().Z < 0.f))
-		{
-			FHitResult Hit(ForceInit);
-			static const FName HoverLineTraceName(TEXT("PredictiveLanding"));
-			FCollisionQueryParams TraceParams;
-			TraceParams.TraceTag = HoverLineTraceName;
-			TraceParams.bTraceComplex = false;
-			TraceParams.bReturnPhysicalMaterial = false;
-			TraceParams.AddIgnoredActor(this);
-			FVector const PredictiveLandingTraceEnd = RGLocation - FVector(0.f, 0.f, 1000.f);
-			bool const bHit = GetWorld()->LineTraceSingleByChannel(Hit, RGLocation, PredictiveLandingTraceEnd, ECC_Visibility, TraceParams);
-			#if ENABLE_DRAW_DEBUG
-			DrawDebugLineTraceSingle(GetWorld(), RGLocation, PredictiveLandingTraceEnd, EDrawDebugTrace::ForOneFrame, bHit, Hit, FColor::Red, FColor::Green, 5.f);
-			#endif
-
-			if (bHit && Hit.Distance < PredictiveLandingThresholdDistance)
-			{
-				const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, Hit.ImpactNormal) * 3000;
-				RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + FVector(0, 0, 100.f), false);
-			}
-		}
-		
-		// End Predictive landings
-	}
-	*/
+	
+	
 	/************************************************************************/
 	/* End apply gravity and sliding forces									*/
 	/************************************************************************/
@@ -256,53 +228,56 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 }
 
 
-bool ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint, FVector& ImpactNormal)
+FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint, FVector& ImpactNormal)
 {
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
-	const FVector TraceEnd = TraceStart - (RGUpVector * (SuspensionLength));
-	
+	const FVector TraceEnd = TraceStart - (RGUpVector * (StickyWheelsGroundDistanceThreshold));
+	FSuspensionHitInfo sHitInfo;
+
 	FHitResult OutHit;
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
+		SuspensionRatio = 1 - (OutHit.Distance / SuspensionLength);
 		FVector LocalImpactPoint(ImpactPoint);
 		FVector LocalImpactNormal(ImpactNormal);
-		
-		if (OutHit.Distance > 0.f)
+		if (SuspensionRatio > 0.f)
 		{
 			LocalImpactPoint = OutHit.ImpactPoint;
 			LocalImpactNormal = OutHit.ImpactNormal;
-		}
+			const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
+			const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
+			const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
+			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
 
-		SuspensionRatio = 1 - (OutHit.Distance / SuspensionLength);
-
-		const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
-		const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-		const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
-		RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
+			#if ENABLE_DRAW_DEBUG
+			if (bDebugInfo)
+			{
+				UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
+				if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
+			}
+			#endif
+			sHitInfo.bWheelOnGround = true;
+		}		
+		sHitInfo.bTraceHit = true;
 
 		ImpactNormal = LocalImpactNormal;
 		ImpactPoint = LocalImpactPoint;
-
-#if ENABLE_DRAW_DEBUG
-		if(bDebugInfo) 
-		{
-			UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
-			if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio).Mid(0,4), nullptr, FLinearColor::White, 0.f);
-		}
-#endif
-		return true;
+		return sHitInfo;
 	}
 
-	return false;
+	return sHitInfo;
 }
 
 
 void ARGBaseVehicle::ApplySuspensionForces()
 {
-	bIsMovingOnGround = (CalcSuspension(BackRight, ImpactPoints[0], ImpactNormals[0]) +
-		CalcSuspension(FrontRight, ImpactPoints[1], ImpactNormals[1]) +
-		CalcSuspension(FrontLeft, ImpactPoints[2], ImpactNormals[2]) +
-		CalcSuspension(BackLeft, ImpactPoints[3], ImpactNormals[3])) > 2;
+	
+	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, ImpactPoints[BACK_RIGHT], ImpactNormals[BACK_RIGHT]);
+	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, ImpactPoints[FRONT_RIGHT], ImpactNormals[FRONT_RIGHT]);
+	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, ImpactPoints[FRONT_LEFT], ImpactNormals[FRONT_LEFT]);
+	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, ImpactPoints[BACK_LEFT], ImpactNormals[BACK_LEFT]);
+	bIsMovingOnGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround) > 2;
+	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 		
 	AvgedNormals = FVector::ZeroVector;
 	for (FVector v : ImpactNormals) AvgedNormals += v;
@@ -311,7 +286,7 @@ void ARGBaseVehicle::ApplySuspensionForces()
 
 
 bool ARGBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit)
-{
+ {
 	FHitResult Hit(ForceInit);
 	static const FName HoverLineTraceName(TEXT("HoverTrace"));
 	FCollisionQueryParams TraceParams;
@@ -423,26 +398,10 @@ void ARGBaseVehicle::ApplyGravityForce()
 	FVector CorrectionalUpVectorFlippingForce = FVector::UpVector;
 
 	if (bStickyWheels) {
-		FHitResult Hit(ForceInit);
-		static const FName HoverLineTraceName(TEXT("ClosestGround"));
-		FCollisionQueryParams TraceParams;
-		TraceParams.TraceTag = HoverLineTraceName;
-		TraceParams.bTraceComplex = false;
-		TraceParams.bReturnPhysicalMaterial = false;
-		TraceParams.AddIgnoredActor(this);
-		FVector const PredictiveLandingTraceEnd = RGLocation - (RGUpVector * StickyWheelsGroundDistanceThreshold);
-		bool const bHit = GetWorld()->LineTraceSingleByChannel(Hit, RGLocation, PredictiveLandingTraceEnd, ECC_Visibility, TraceParams);
-#if ENABLE_DRAW_DEBUG
-		if (bDebugInfo > 0)
+		if (bIsCloseToGround)
 		{
-			DrawDebugLineTraceSingle(GetWorld(), RGLocation, PredictiveLandingTraceEnd, EDrawDebugTrace::ForOneFrame, bHit, Hit, FColor::Blue, FColor::Green, 0.f);
-		}
-#endif
-
-		if (bHit)
-		{
-			GravityForce = Hit.Normal * (bIsMovingOnGround ? GravityGround : GravityAir);
-			CorrectionalUpVectorFlippingForce = Hit.Normal;
+			GravityForce = AvgedNormals * (bIsMovingOnGround ? GravityGround : GravityAir);
+			CorrectionalUpVectorFlippingForce = AvgedNormals;
 		}
 	}
 
@@ -451,7 +410,7 @@ void ARGBaseVehicle::ApplyGravityForce()
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		UKismetSystemLibrary::PrintString(this, FString::SanitizeFloat(MappedDotProduct), true, false, FLinearColor::Blue, 0.f);
+		//UKismetSystemLibrary::PrintString(this, FString::SanitizeFloat(MappedDotProduct), true, false, FLinearColor::Blue, 0.f);
 		const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, CorrectionalUpVectorFlippingForce) * AntiRollMaxForce * MappedDotProduct;
 		RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + (CorrectionalUpVectorFlippingForce *  100.f), false);
 	}

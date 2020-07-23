@@ -49,9 +49,6 @@ public:
 	bool TraceFunc(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit);
 
 	UFUNCTION()
-	void SetDampingBasedOnGroundInfo();
-
-	UFUNCTION()
 	FVector GetOffsetedCenterOfVehicle() const;
 
 	UFUNCTION()
@@ -74,6 +71,9 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	void SetBoosting(bool inBoost);
+
+	UFUNCTION(BlueprintCallable)
+	void ApplyGravityForce();
 
 protected:
 	// Reference to MMTPawn root component
@@ -182,7 +182,10 @@ public:
 	bool bStickyWheels;
 
 	UPROPERTY(EditDefaultsOnly)
-	float PredictiveLandingThresholdDistance;
+	float StickyWheelsGroundDistanceThreshold;
+
+	UPROPERTY(EditDefaultsOnly)
+	float AntiRollMaxForce;
 
 	UPROPERTY(EditDefaultsOnly)
 	float LinearDampingGround;
@@ -234,4 +237,5 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	FVector2D AccelerationCenterOfMassOffset;
+
 };

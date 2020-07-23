@@ -26,7 +26,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 	GravityGround = -980.0;
 	ScalarFrictionVal = 1.f;
 	GroundFriction = 8.f;
-	PredictiveLandingThresholdDistance = 500.f;
+	AntiRollMaxForce = 2000.f;
 	bStickyWheels = false;
 	AvgedNormals = FVector::OneVector;
 	LinearDampingGround = 0.1f;
@@ -46,6 +46,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 	TorqueSpeed = 12.f;
 	BrakinDeceleration = 1500.f;
 	BackwardsAcceleration = 1500.f;
+	StickyWheelsGroundDistanceThreshold = 800.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
@@ -161,8 +162,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/************************************************************************/
 	/* Apply gravity and sliding forces                                     */
 	/************************************************************************/
-	const FVector GravityForce = bStickyWheels && bIsMovingOnGround ? RGUpVector * GravityGround : FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
-	RootBodyInstance->AddForce(GravityForce,false, false);
+	ApplyGravityForce();
 
 	if (bIsMovingOnGround)
 	{
@@ -204,8 +204,6 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/************************************************************************/
 	/* End apply gravity and sliding forces									*/
 	/************************************************************************/
-
-	SetDampingBasedOnGroundInfo();
 
 	// Throttle force adjustments based on Brake and forward axis values
 	const float BrakeForwardAxisAdjusment = CurrentThrottleAxis + CurrentBrakeAxis;
@@ -261,7 +259,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 bool ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint, FVector& ImpactNormal)
 {
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
-	const FVector TraceEnd = TraceStart + (RGUpVector * (SuspensionLength * -1.f));
+	const FVector TraceEnd = TraceStart - (RGUpVector * (SuspensionLength));
 	
 	FHitResult OutHit;
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
@@ -326,15 +324,6 @@ bool ARGBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawD
 	DrawDebugLineTraceSingle(GetWorld(), Start, End, DrawDebugType, bHit, OutHit, FColor::Red, FColor::Green, 5.f);
 #endif
 	return bHit;
-}
-
-
-void ARGBaseVehicle::SetDampingBasedOnGroundInfo()
-{
-
-	RootBodyInstance->LinearDamping = bIsMovingOnGround ? LinearDampingGround : LinearDampingAir;
-	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
-	RootBodyInstance->UpdateDampingProperties();
 }
 
 
@@ -427,6 +416,48 @@ void ARGBaseVehicle::SetBoosting(bool inBoost)
 	bIsBoosting = inBoost;
 }
 
+
+void ARGBaseVehicle::ApplyGravityForce()
+{
+	FVector GravityForce = FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
+	FVector CorrectionalUpVectorFlippingForce = FVector::UpVector;
+
+	if (bStickyWheels) {
+		FHitResult Hit(ForceInit);
+		static const FName HoverLineTraceName(TEXT("ClosestGround"));
+		FCollisionQueryParams TraceParams;
+		TraceParams.TraceTag = HoverLineTraceName;
+		TraceParams.bTraceComplex = false;
+		TraceParams.bReturnPhysicalMaterial = false;
+		TraceParams.AddIgnoredActor(this);
+		FVector const PredictiveLandingTraceEnd = RGLocation - (RGUpVector * StickyWheelsGroundDistanceThreshold);
+		bool const bHit = GetWorld()->LineTraceSingleByChannel(Hit, RGLocation, PredictiveLandingTraceEnd, ECC_Visibility, TraceParams);
+#if ENABLE_DRAW_DEBUG
+		if (bDebugInfo > 0)
+		{
+			DrawDebugLineTraceSingle(GetWorld(), RGLocation, PredictiveLandingTraceEnd, EDrawDebugTrace::ForOneFrame, bHit, Hit, FColor::Blue, FColor::Green, 0.f);
+		}
+#endif
+
+		if (bHit)
+		{
+			GravityForce = Hit.Normal * (bIsMovingOnGround ? GravityGround : GravityAir);
+			CorrectionalUpVectorFlippingForce = Hit.Normal;
+		}
+	}
+
+	// Roll towards Up Vector
+	if (!bIsMovingOnGround)
+	{
+		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
+		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
+		UKismetSystemLibrary::PrintString(this, FString::SanitizeFloat(MappedDotProduct), true, false, FLinearColor::Blue, 0.f);
+		const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, CorrectionalUpVectorFlippingForce) * AntiRollMaxForce * MappedDotProduct;
+		RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + (CorrectionalUpVectorFlippingForce *  100.f), false);
+	}
+
+	RootBodyInstance->AddForce(GravityForce, false, false);
+}
 
 FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveComponent)
 {

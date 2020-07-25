@@ -3,6 +3,7 @@
 
 #include "RGBaseVehicle.h"
 #include "CollisionQueryParams.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 
 static int32 bDebugInfo = 0;
 FAutoConsoleVariableRef CVARDebugPlayableArea(
@@ -25,6 +26,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 	bIsCloseToGround = false;
 	GravityAir = -980.0;
 	GravityGround = -980.0;
+	// Gameplay driven friction
 	ScalarFrictionVal = 1.f;
 	GroundFriction = 8.f;
 	AntiRollMaxForce = 2000.f;
@@ -53,6 +55,9 @@ ARGBaseVehicle::ARGBaseVehicle()
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
 	RGForwardVector = FVector::ZeroVector;
+	CurrentGroundFriction = 1.f;
+	CurrentGroundRestitution = 1.f;
+
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
 	if (CollisionMesh)
@@ -108,8 +113,8 @@ void ARGBaseVehicle::BeginPlay()
 	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
 	if (PawnRootComponent != NULL) 
 	{
-		ImpactPoints.Init(FVector::ZeroVector,4);
-		ImpactNormals.Init(FVector::ZeroVector,4);
+		ImpactPoints.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
+		ImpactNormals.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 	}
 
@@ -168,7 +173,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (bIsMovingOnGround)
 	{
 		// Drag/Friction force
-		const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction)) * RGRightVector : FVector::ZeroVector;
+		const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction * CurrentGroundFriction)) * RGRightVector : FVector::ZeroVector;
 		RootBodyInstance->AddForce(FrictionDragForce, false, false);
 	}
 	
@@ -218,7 +223,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		UKismetSystemLibrary::DrawDebugSphere(this, GetOffsetedCenterOfVehicle(), 10.f, 12);
 		UKismetSystemLibrary::DrawDebugSphere(this, RGLocation, 10.f, 12);
-		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed).Mid(0, 4), NULL,FLinearColor::Red);
+		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed).Mid(0, 5), NULL,FLinearColor::Red);
 	}
 
 	// TODO: Vehicle Effects
@@ -256,7 +261,14 @@ FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVecto
 				if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
 			}
 			#endif
+
+			// Trace hits and it is within the suspension length size, hence the wheel is on the ground
 			sHitInfo.bWheelOnGround = true;
+
+			// Physical material properties for this wheel contacting the ground
+			const bool bPhysMatExists = OutHit.PhysMaterial.IsValid();
+			sHitInfo.GroundFriction = bPhysMatExists ? OutHit.PhysMaterial->Friction : DEFAULT_GROUND_FRICTION;
+			sHitInfo.GroundRestitution = bPhysMatExists ? OutHit.PhysMaterial->Restitution : DEFAULT_GROUND_RESTITUTION;			
 		}		
 		sHitInfo.bTraceHit = true;
 
@@ -276,8 +288,11 @@ void ARGBaseVehicle::ApplySuspensionForces()
 	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, ImpactPoints[FRONT_RIGHT], ImpactNormals[FRONT_RIGHT]);
 	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, ImpactPoints[FRONT_LEFT], ImpactNormals[FRONT_LEFT]);
 	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, ImpactPoints[BACK_LEFT], ImpactNormals[BACK_LEFT]);
+
 	bIsMovingOnGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround) > 2;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
+	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
+	CurrentGroundRestitution = (BackRightSuspension.GroundRestitution + FrontRightSuspension.GroundRestitution + FrontLeftSuspension.GroundRestitution + BackLeftSuspension.GroundRestitution) / NUMBER_OF_WHEELS;
 		
 	AvgedNormals = FVector::ZeroVector;
 	for (FVector v : ImpactNormals) AvgedNormals += v;
@@ -291,8 +306,8 @@ bool ARGBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawD
 	static const FName HoverLineTraceName(TEXT("HoverTrace"));
 	FCollisionQueryParams TraceParams;
 	TraceParams.TraceTag = HoverLineTraceName;
-	TraceParams.bTraceComplex = true;
-	TraceParams.bReturnPhysicalMaterial = false;
+	TraceParams.bTraceComplex = false;
+	TraceParams.bReturnPhysicalMaterial = true;
 	TraceParams.AddIgnoredActor(this);
 	bool const bHit = GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, TraceParams);
 #if ENABLE_DRAW_DEBUG
@@ -360,7 +375,7 @@ void ARGBaseVehicle::ApplyInputStack()
 	{
 		if (FMath::Sign(CurrentHorizontalSpeed) <= 0.0)
 		{
-			if (FMath::Abs(CurrentHorizontalSpeed) <= MaxBackwardsSpeed)
+			if (FMath::Abs(CurrentHorizontalSpeed) <= getMaxBackwardsSpeed())
 			{
 				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BackwardsAcceleration;
 			}
@@ -376,7 +391,13 @@ void ARGBaseVehicle::ApplyInputStack()
 
 float ARGBaseVehicle::getMaxSpeed() const
 {
-	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed;
+	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed * CurrentGroundRestitution;
+}
+
+
+float ARGBaseVehicle::getMaxBackwardsSpeed() const
+{
+	return MaxBackwardsSpeed * CurrentGroundRestitution;
 }
 
 
@@ -416,6 +437,7 @@ void ARGBaseVehicle::ApplyGravityForce()
 	RootBodyInstance->AddForce(GravityForce, false, false);
 }
 
+
 FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveComponent)
 {
 	if (PrimitiveComponent == NULL) 
@@ -424,6 +446,7 @@ FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveCom
 	}
 	return PrimitiveComponent->GetBodyInstance();
 }
+
 
 // Called whenever this actor is being removed from a level
 void ARGBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)

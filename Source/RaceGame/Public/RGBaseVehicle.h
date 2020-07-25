@@ -12,6 +12,9 @@
 #define FRONT_RIGHT 1
 #define FRONT_LEFT 2
 #define BACK_LEFT 3
+#define DEFAULT_GROUND_FRICTION 1
+#define DEFAULT_GROUND_RESTITUTION 1
+#define NUMBER_OF_WHEELS 4
 
 USTRUCT()
 struct RACEGAME_API FSuspensionHitInfo
@@ -26,10 +29,17 @@ public:
 	UPROPERTY()
 	bool bTraceHit;
 
+	UPROPERTY()
+	float GroundFriction;
+
+	UPROPERTY()
+	float GroundRestitution;
+
 	FSuspensionHitInfo() : 
 		bWheelOnGround(false),
-		bTraceHit(false)
-			
+		bTraceHit(false),
+		GroundFriction(1.0f),
+		GroundRestitution(1.0f)
 	{
 
 	}
@@ -95,6 +105,9 @@ public:
 
 	UFUNCTION(BlueprintPure)
 	float getMaxSpeed() const;
+
+	UFUNCTION(BlueprintPure)
+	float getMaxBackwardsSpeed() const;
 
 	UFUNCTION(BlueprintPure)
 	float getMaxAcceleration() const;
@@ -175,6 +188,12 @@ protected:
 
 	UPROPERTY()
 	bool bIsBoosting;
+
+	UPROPERTY()
+	float CurrentGroundFriction;
+
+	UPROPERTY()
+	float CurrentGroundRestitution;
 
 public:
 

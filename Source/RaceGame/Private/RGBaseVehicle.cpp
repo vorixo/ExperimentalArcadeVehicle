@@ -29,17 +29,17 @@ ARGBaseVehicle::ARGBaseVehicle()
 	// Gameplay driven friction
 	ScalarFrictionVal = 1.f;
 	GroundFriction = 8.f;
-	AntiRollMaxForce = 2000.f;
 	bStickyWheels = false;
 	// Default to z grav
 	AvgedNormals = FVector::UpVector;
-	LinearDampingGround = 0.1f;
 	LinearDampingAir = 0.01f;
 	AngularDampingGround = 10.0f;
 	AngularDampingAir = 5.f;
-	EngineDecceleration = 1500.f;
+	EngineDecceleration = 1000.f;
 	MaxSpeed = 2000.0f;
 	MaxSpeedBoosting = 3000.f;
+	// Maximum speed that can ever be achieved, accelerating or not.
+	TerminalSpeed = 3500.f;
 	bIsBoosting = false;
 	CurrentThrottleAxis = 0.f;
 	CurrentBrakeAxis = 0.f;
@@ -48,7 +48,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 	VehicleBoostAcceleration = 3000.f;
 	MaxBackwardsSpeed = 2000.f;
 	TorqueSpeed = 12.f;
-	BrakinDeceleration = 1500.f;
+	BrakinDeceleration = 2000.f;
 	BackwardsAcceleration = 1500.f;
 	StickyWheelsGroundDistanceThreshold = 800.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
@@ -56,7 +56,8 @@ ARGBaseVehicle::ARGBaseVehicle()
 	RGRightVector = FVector::ZeroVector;
 	RGForwardVector = FVector::ZeroVector;
 	CurrentGroundFriction = 1.f;
-	CurrentGroundRestitution = 1.f;
+	CurrentGroundScalarResistance = 0.f;
+	SetWalkableFloorZ(0.71f);
 
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -113,8 +114,9 @@ void ARGBaseVehicle::BeginPlay()
 	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
 	if (PawnRootComponent != NULL) 
 	{
-		ImpactPoints.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
-		ImpactNormals.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
+		CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
+		//ImpactPoints.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
+		//ImpactNormals.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 	}
 
@@ -183,19 +185,19 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/************************************************************************/
 
 	// Throttle force adjustments based on Brake and forward axis values
-	const float BrakeForwardAxisAdjusment = CurrentThrottleAxis + CurrentBrakeAxis;
-
 	if (!bIsBoosting)
 	{
 		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : EngineDecceleration
 			* EngineDeccelerationCurve->GetFloatValue(FMath::Abs(CurrentHorizontalSpeed) / getMaxSpeed())
-			* (1 - FMath::Abs(BrakeForwardAxisAdjusment))
+			* FMath::IsNearlyZero(FMath::Abs(CurrentBrakeAxis) + CurrentThrottleAxis)
 			* FMath::Sign(CurrentHorizontalSpeed);
 
 		ThrottleForce = bIsMovingOnGround ? ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio) : FVector::ZeroVector;
 	}
+	
 
-	RootBodyInstance->LinearDamping = bIsMovingOnGround ? (BrakeForwardAxisAdjusment > KINDA_SMALL_NUMBER ? 0.f : LinearDampingGround) : LinearDampingAir;
+	// Forward and backwards speed work with 0 damping.
+	RootBodyInstance->LinearDamping = bIsMovingOnGround ? CurrentGroundScalarResistance : LinearDampingAir;
 	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
 	RootBodyInstance->UpdateDampingProperties();
 
@@ -214,6 +216,14 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		RootBodyInstance->AddForce(ThrottleForce, false);
 	}
 	
+
+	// -- WIP -- Terminal speed system (See https://github.com/vorixo/ExperimentalArcadeVehicle/commit/521409fe4de12ab0a9a2587bae42e2cd71e88c14 to find the engine deceleration approach) 
+	if (FMath::Abs(CurrentHorizontalSpeed) > GetMaxSpeedAxisIndependent())
+	{
+		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetMaxSpeedAxisIndependent());
+		const float TerminalVelocityPreemptionFinalForce = FMath::Lerp(0.f, TERMINAL_VELOCITY_PREEMPTION_FORCE, BlendAlpha);
+		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
+	}
 	
 	/************************************************************************/
 	/* End apply movement forces                                            */
@@ -233,7 +243,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 }
 
 
-FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVector& ImpactPoint, FVector& ImpactNormal)
+FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FCachedSuspensionInfo& InCachedInfo)
 {
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
 	const FVector TraceEnd = TraceStart - (RGUpVector * (StickyWheelsGroundDistanceThreshold));
@@ -243,16 +253,30 @@ FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVecto
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
 		SuspensionRatio = 1 - (OutHit.Distance / SuspensionLength);
-		FVector LocalImpactPoint(ImpactPoint);
-		FVector LocalImpactNormal(ImpactNormal);
+		FVector LocalImpactPoint(InCachedInfo.ImpactPoint);
+		FVector LocalImpactNormal(InCachedInfo.ImpactNormal);
+
 		if (SuspensionRatio > 0.f)
 		{
-			LocalImpactPoint = OutHit.ImpactPoint;
-			LocalImpactNormal = OutHit.ImpactNormal;
-			const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
-			const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-			const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
-			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
+			const bool bIsWalkable = bStickyWheels ? FMath::Abs(FVector::DotProduct(RGForwardVector, OutHit.ImpactNormal)) < WalkableFloorZ : OutHit.ImpactNormal.Z >= WalkableFloorZ;
+
+			if (!bIsWalkable) 
+			{
+				// If the surface isn't walkable we compute a repulsive force towards the normal to make the vehicle get in a valid position 
+				RootBodyInstance->AddForce(OutHit.ImpactNormal * REPULSIVE_FORCE_MAX_WALKABLE_ANGLE, false);
+			}
+			else
+			{
+
+				LocalImpactPoint = OutHit.ImpactPoint;
+				LocalImpactNormal = OutHit.ImpactNormal;
+
+				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
+				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
+				const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
+				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
+
+			}
 
 			#if ENABLE_DRAW_DEBUG
 			if (bDebugInfo)
@@ -268,12 +292,12 @@ FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVecto
 			// Physical material properties for this wheel contacting the ground
 			const bool bPhysMatExists = OutHit.PhysMaterial.IsValid();
 			sHitInfo.GroundFriction = bPhysMatExists ? OutHit.PhysMaterial->Friction : DEFAULT_GROUND_FRICTION;
-			sHitInfo.GroundRestitution = bPhysMatExists ? OutHit.PhysMaterial->Restitution : DEFAULT_GROUND_RESTITUTION;			
+			sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
 		}		
 		sHitInfo.bTraceHit = true;
 
-		ImpactNormal = LocalImpactNormal;
-		ImpactPoint = LocalImpactPoint;
+		InCachedInfo.ImpactNormal = LocalImpactNormal;
+		InCachedInfo.ImpactPoint = LocalImpactPoint;
 		return sHitInfo;
 	}
 
@@ -284,19 +308,19 @@ FSuspensionHitInfo ARGBaseVehicle::CalcSuspension(FVector RelativeOffset, FVecto
 void ARGBaseVehicle::ApplySuspensionForces()
 {
 	
-	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, ImpactPoints[BACK_RIGHT], ImpactNormals[BACK_RIGHT]);
-	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, ImpactPoints[FRONT_RIGHT], ImpactNormals[FRONT_RIGHT]);
-	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, ImpactPoints[FRONT_LEFT], ImpactNormals[FRONT_LEFT]);
-	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, ImpactPoints[BACK_LEFT], ImpactNormals[BACK_LEFT]);
+	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, CachedSuspensionInfo[BACK_RIGHT]);
+	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, CachedSuspensionInfo[FRONT_RIGHT]);
+	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT]);
+	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT]);
 
 	bIsMovingOnGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround) > 2;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
-	CurrentGroundRestitution = (BackRightSuspension.GroundRestitution + FrontRightSuspension.GroundRestitution + FrontLeftSuspension.GroundRestitution + BackLeftSuspension.GroundRestitution) / NUMBER_OF_WHEELS;
+	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
 		
 	AvgedNormals = FVector::ZeroVector;
-	for (FVector v : ImpactNormals) AvgedNormals += v;
-	AvgedNormals /= ImpactNormals.Num();
+	for (FCachedSuspensionInfo csi : CachedSuspensionInfo) AvgedNormals += csi.ImpactNormal;
+	AvgedNormals /= NUMBER_OF_WHEELS;
 }
 
 
@@ -347,17 +371,14 @@ void ARGBaseVehicle::ApplyInputStack()
 	// Throttle
 	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting) && bIsMovingOnGround)
 	{
+		/** We don't decelerate when we go over max speed, since we want vehicles to gain velocity downhill
+		* The terminal will be the maximum individual top speed that any vehicle can reach in any situation
+		/**/
 		if (CurrentHorizontalSpeed <= getMaxSpeed())
 		{
 			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
 			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getMaxAcceleration() * MaxThrottleRatio;
 		}
-		else
-		{
-			// Natural limiting force (engine maxed out)
-			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * -getMaxAcceleration() * 1.2f;
-		}
-		
 	}
 
 	// Steering
@@ -373,7 +394,7 @@ void ARGBaseVehicle::ApplyInputStack()
 	// Braking
 	if (CurrentBrakeAxis <= -0.1 && bIsMovingOnGround && !bIsBoosting)
 	{
-		if (FMath::Sign(CurrentHorizontalSpeed) <= 0.0)
+		if (CurrentHorizontalSpeed <= 0.0)
 		{
 			if (FMath::Abs(CurrentHorizontalSpeed) <= getMaxBackwardsSpeed())
 			{
@@ -389,15 +410,21 @@ void ARGBaseVehicle::ApplyInputStack()
 }
 
 
+float ARGBaseVehicle::GetMaxSpeedAxisIndependent() const
+{
+	return CurrentHorizontalSpeed >= 0 ? getMaxSpeed() : getMaxBackwardsSpeed();
+}
+
+
 float ARGBaseVehicle::getMaxSpeed() const
 {
-	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed * CurrentGroundRestitution;
+	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed;
 }
 
 
 float ARGBaseVehicle::getMaxBackwardsSpeed() const
 {
-	return MaxBackwardsSpeed * CurrentGroundRestitution;
+	return MaxBackwardsSpeed;
 }
 
 
@@ -429,12 +456,51 @@ void ARGBaseVehicle::ApplyGravityForce()
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		//UKismetSystemLibrary::PrintString(this, FString::SanitizeFloat(MappedDotProduct), true, false, FLinearColor::Blue, 0.f);
-		const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, CorrectionalUpVectorFlippingForce) * AntiRollMaxForce * MappedDotProduct;
+		const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, CorrectionalUpVectorFlippingForce) * ANTI_ROLL_FORCE * MappedDotProduct;
 		RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + (CorrectionalUpVectorFlippingForce *  100.f), false);
 	}
 
 	RootBodyInstance->AddForce(GravityForce, false, false);
+}
+
+
+float ARGBaseVehicle::GetTerminalSpeed() const
+{
+	return TerminalSpeed;
+}
+
+
+float ARGBaseVehicle::GetWalkableFloorAngle() const
+{
+	return WalkableFloorAngle;
+}
+
+
+void ARGBaseVehicle::SetWalkableFloorAngle(float InWalkableFloorAngle)
+{
+	WalkableFloorAngle = FMath::Clamp(InWalkableFloorAngle, 0.f, 90.0f);
+	WalkableFloorZ = FMath::Cos(FMath::DegreesToRadians(WalkableFloorAngle));
+}
+
+
+float ARGBaseVehicle::GetWalkableFloorZ() const
+{
+	return WalkableFloorZ;
+}
+
+
+void ARGBaseVehicle::SetWalkableFloorZ(float InWalkableFloorZ)
+{
+	WalkableFloorZ = FMath::Clamp(InWalkableFloorZ, 0.f, 1.f);
+	WalkableFloorAngle = FMath::RadiansToDegrees(FMath::Acos(WalkableFloorZ));
+}
+
+
+bool ARGBaseVehicle::IsBraking() const
+{
+	return ((CurrentBrakeAxis <= -0.1 && CurrentHorizontalSpeed > 0.f) || 
+		(CurrentThrottleAxis >= 0.1 && CurrentHorizontalSpeed <= 0.f) ||
+		(CurrentThrottleAxis + CurrentBrakeAxis) == 0);
 }
 
 
@@ -446,6 +512,21 @@ FBodyInstance* ARGBaseVehicle::GetBodyInstance(UPrimitiveComponent* PrimitiveCom
 	}
 	return PrimitiveComponent->GetBodyInstance();
 }
+
+
+#if WITH_EDITOR
+void ARGBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	const FProperty* PropertyThatChanged = PropertyChangedEvent.MemberProperty;
+	if (PropertyThatChanged && PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, WalkableFloorAngle))
+	{
+		// Compute WalkableFloorZ from the Angle.
+		SetWalkableFloorAngle(WalkableFloorAngle);
+	}
+}
+#endif // WITH_EDITOR
 
 
 // Called whenever this actor is being removed from a level

@@ -8,13 +8,21 @@
 #include "Engine/Public/DrawDebugHelpers.h"
 #include "RGBaseVehicle.generated.h"
 
+// Suspension
 #define BACK_RIGHT 0
 #define FRONT_RIGHT 1
 #define FRONT_LEFT 2
 #define BACK_LEFT 3
-#define DEFAULT_GROUND_FRICTION 1
-#define DEFAULT_GROUND_RESTITUTION 1
 #define NUMBER_OF_WHEELS 4
+
+// Misc vars
+#define DEFAULT_GROUND_FRICTION 1
+#define DEFAULT_GROUND_RESISTANCE 1
+#define REPULSIVE_FORCE_MAX_WALKABLE_ANGLE 1000
+#define ANTI_ROLL_FORCE 2000
+#define TERMINAL_VELOCITY_PREEMPTION_FORCE 2000.f
+
+#define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
 
 USTRUCT()
 struct RACEGAME_API FSuspensionHitInfo
@@ -33,17 +41,43 @@ public:
 	float GroundFriction;
 
 	UPROPERTY()
-	float GroundRestitution;
+	float GroundResistance;
 
 	FSuspensionHitInfo() : 
 		bWheelOnGround(false),
 		bTraceHit(false),
 		GroundFriction(1.0f),
-		GroundRestitution(1.0f)
+		GroundResistance(0.0f)
 	{
 
 	}
 };
+
+USTRUCT()
+struct RACEGAME_API FCachedSuspensionInfo
+{
+	GENERATED_USTRUCT_BODY()
+
+public:
+
+	UPROPERTY()
+	FVector ImpactPoint;
+
+	UPROPERTY()
+	FVector ImpactNormal;
+
+	//UPROPERTY()
+	//float SuspensionRatio;
+
+	FCachedSuspensionInfo() :
+		ImpactPoint(FVector::ZeroVector),
+		ImpactNormal(FVector::ZeroVector)
+		//SuspensionRatio(0.f)
+	{
+
+	}
+};
+
 
 UCLASS()
 class RACEGAME_API ARGBaseVehicle : public APawn
@@ -80,7 +114,7 @@ public:
 	/* Returns true if the wheel is within the suspension distance threshold (meaning it is in the ground)                                                                     
 	**/
 	UFUNCTION()
-	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FVector &ImpactPoint, FVector &ImpactNormal);
+	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FCachedSuspensionInfo &InCachedInfo);
 
 	UFUNCTION()
 	void ApplySuspensionForces();
@@ -103,6 +137,10 @@ public:
 	UFUNCTION()
 	void ApplyInputStack();
 
+	/** Gets you whatever max speed is being used*/
+	UFUNCTION(BlueprintPure)
+	float GetMaxSpeedAxisIndependent() const;
+
 	UFUNCTION(BlueprintPure)
 	float getMaxSpeed() const;
 
@@ -117,6 +155,29 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	void ApplyGravityForce();
+
+	UFUNCTION(BlueprintPure)
+	float GetTerminalSpeed() const;
+
+	/** Get the max angle in degrees of a walkable surface for the character. */
+	UFUNCTION(BlueprintPure)
+	float GetWalkableFloorAngle() const;
+
+	/** Set the max angle in degrees of a walkable surface for the character. Also computes WalkableFloorZ. */
+	UFUNCTION(BlueprintCallable)
+	void SetWalkableFloorAngle(float InWalkableFloorAngle);
+
+	/** Get the Z component of the normal of the steepest walkable surface for the character. Any lower than this and it is not walkable. */
+	UFUNCTION()
+	float GetWalkableFloorZ() const;
+
+	/** Set the Z component of the normal of the steepest walkable surface for the character. Also computes WalkableFloorAngle. */
+	UFUNCTION(BlueprintCallable)
+	void SetWalkableFloorZ(float InWalkableFloorZ);
+
+	/** Is any brakin force acting over the vehicle? */
+	UFUNCTION(BlueprintPure)
+	bool IsBraking() const;
 
 protected:
 	// Reference to MMTPawn root component
@@ -133,10 +194,7 @@ protected:
 	float CurrentHorizontalSpeed;
 
 	UPROPERTY()
-	TArray<FVector> ImpactPoints;
-
-	UPROPERTY()
-	TArray<FVector> ImpactNormals;
+	TArray<FCachedSuspensionInfo> CachedSuspensionInfo;
 
 	UPROPERTY()
 	float SuspensionRatio;
@@ -192,8 +250,9 @@ protected:
 	UPROPERTY()
 	float CurrentGroundFriction;
 
+	/** Resistance imposed by the current ground in which the user is navigating, will be translated to ground linear damping. */
 	UPROPERTY()
-	float CurrentGroundRestitution;
+	float CurrentGroundScalarResistance;
 
 public:
 
@@ -235,12 +294,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	float StickyWheelsGroundDistanceThreshold;
-
-	UPROPERTY(EditDefaultsOnly)
-	float AntiRollMaxForce;
-
-	UPROPERTY(EditDefaultsOnly)
-	float LinearDampingGround;
 
 	UPROPERTY(EditDefaultsOnly)
 	float LinearDampingAir;
@@ -288,6 +341,28 @@ public:
 	bool bTiltedThrottle;
 
 	UPROPERTY(EditDefaultsOnly)
+	float TerminalSpeed;
+
+	UPROPERTY(EditDefaultsOnly)
 	FVector2D AccelerationCenterOfMassOffset;
+
+private:
+	/**
+	* Max angle in degrees of a walkable surface. Any greater than this and it is too steep to be walkable.
+	*/
+	UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "90.0"))
+	float WalkableFloorAngle;
+
+	/**
+	 * Minimum Z value for floor normal. If less, not a walkable surface. Computed from WalkableFloorAngle.
+	 */
+	UPROPERTY(VisibleAnywhere)
+	float WalkableFloorZ;
+
+public:
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif // WITH_EDITOR
 
 };

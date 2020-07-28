@@ -24,6 +24,10 @@
 
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
 
+#if WITH_EDITOR
+class UArrowComponent;
+#endif
+
 USTRUCT()
 struct RACEGAME_API FSuspensionHitInfo
 {
@@ -256,21 +260,40 @@ protected:
 
 public:
 
-	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+#if WITH_EDITOR
+
+	UPROPERTY()
+	UStaticMeshComponent* BackRightHandle;
+
+	UPROPERTY()
+	UStaticMeshComponent* FrontRightHandle;
+
+	UPROPERTY()
+	UStaticMeshComponent* FrontLeftHandle;
+
+	UPROPERTY()
+	UStaticMeshComponent* BackLeftHandle;
+
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	bool bHideHelpHandlersInPIE;
+
+#endif
+
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* CollisionMesh;
 
-	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	FVector BackRight;
 
-	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	FVector FrontRight;
 
-	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	FVector FrontLeft;
 
-	UPROPERTY(Category = HoverComponent, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	FVector BackLeft;
-	
+
 	UPROPERTY(EditDefaultsOnly)
 	float SuspensionLength;
 
@@ -363,6 +386,7 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	void UpdateVisualHandlers();
 #endif // WITH_EDITOR
 
 };

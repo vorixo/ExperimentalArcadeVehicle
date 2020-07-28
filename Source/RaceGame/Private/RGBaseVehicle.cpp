@@ -78,6 +78,35 @@ ARGBaseVehicle::ARGBaseVehicle()
 	FrontLeft = FVector(75.f, -50.f, -25.f);
 	BackLeft = FVector(-75.f, -50.f, -25.f);
 
+#if WITH_EDITOR
+	bHideHelpHandlersInPIE = true;
+
+	BackRightHandle = CreateDefaultSubobject<UStaticMeshComponent>("BackRightHandle");
+	FrontRightHandle = CreateDefaultSubobject<UStaticMeshComponent>("FrontRightHandle");
+	FrontLeftHandle = CreateDefaultSubobject<UStaticMeshComponent>("FrontLeftHandle");
+	BackLeftHandle = CreateDefaultSubobject<UStaticMeshComponent>("BackLeftHandle");
+	if (BackLeftHandle && BackRightHandle && FrontRightHandle && FrontLeftHandle)
+	{
+		static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderHelpMesh(TEXT("StaticMesh'/Game/ThirdPersonBP/HelperCylinder.HelperCylinder'"));
+		BackRightHandle->SetStaticMesh(CylinderHelpMesh.Object);
+		FrontRightHandle->SetStaticMesh(CylinderHelpMesh.Object);
+		FrontLeftHandle->SetStaticMesh(CylinderHelpMesh.Object);
+		BackLeftHandle->SetStaticMesh(CylinderHelpMesh.Object);
+		
+		BackRightHandle->SetupAttachment(CollisionMesh);
+		FrontRightHandle->SetupAttachment(CollisionMesh);
+		FrontLeftHandle->SetupAttachment(CollisionMesh);
+		BackLeftHandle->SetupAttachment(CollisionMesh);
+		
+		BackRightHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		FrontRightHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		FrontLeftHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		BackLeftHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+		UpdateVisualHandlers();
+	}
+#endif //WITH_EDITOR
+
 }
 
 
@@ -106,7 +135,6 @@ void DrawDebugLineTraceSingle(const UWorld* World, const FVector& Start, const F
 }
 
 
-
 // Called when the game starts or when spawned
 void ARGBaseVehicle::BeginPlay()
 {
@@ -115,8 +143,6 @@ void ARGBaseVehicle::BeginPlay()
 	if (PawnRootComponent != NULL) 
 	{
 		CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
-		//ImpactPoints.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
-		//ImpactNormals.Init(FVector::ZeroVector, NUMBER_OF_WHEELS);
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 	}
 
@@ -520,11 +546,41 @@ void ARGBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
 	const FProperty* PropertyThatChanged = PropertyChangedEvent.MemberProperty;
-	if (PropertyThatChanged && PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, WalkableFloorAngle))
+	if (PropertyThatChanged)
 	{
-		// Compute WalkableFloorZ from the Angle.
-		SetWalkableFloorAngle(WalkableFloorAngle);
+		if(PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, WalkableFloorAngle))
+		{
+			// Compute WalkableFloorZ from the Angle.
+			SetWalkableFloorAngle(WalkableFloorAngle);
+		}
+
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, SuspensionLength) ||
+			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, BackLeft) ||
+			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, BackRight) ||
+			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, FrontLeft) ||
+			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, FrontRight))
+		{
+			UpdateVisualHandlers();
+		}
+
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, bHideHelpHandlersInPIE))
+		{
+			BackRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+			FrontRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+			FrontLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+			BackLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+		}
 	}
+}
+
+
+void ARGBaseVehicle::UpdateVisualHandlers()
+{
+	// Before calling this function be sure your position vectors have the right value
+	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
+	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
+	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
+	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
 }
 #endif // WITH_EDITOR
 

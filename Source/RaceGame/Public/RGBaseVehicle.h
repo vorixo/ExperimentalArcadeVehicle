@@ -262,16 +262,16 @@ public:
 
 #if WITH_EDITOR
 
-	UPROPERTY()
+	UPROPERTY(Category = HelperHandler, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* BackRightHandle;
 
-	UPROPERTY()
+	UPROPERTY(Category = HelperHandler, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* FrontRightHandle;
 
-	UPROPERTY()
+	UPROPERTY(Category = HelperHandler, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* FrontLeftHandle;
 
-	UPROPERTY()
+	UPROPERTY(Category = HelperHandler, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* BackLeftHandle;
 
 	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
@@ -282,17 +282,19 @@ public:
 	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* CollisionMesh;
 
-	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	// These four properties are really relevant: for visualization: Category = HoverComponent, VisibleAnywhere
+	UPROPERTY()
 	FVector BackRight;
 
-	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY()
 	FVector FrontRight;
 
-	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY()
 	FVector FrontLeft;
 
-	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
+	UPROPERTY()
 	FVector BackLeft;
+	// These will spawn the traces
 
 	UPROPERTY(EditDefaultsOnly)
 	float SuspensionLength;
@@ -386,7 +388,9 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	void UpdateVisualHandlers();
+	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
+	virtual void OnConstruction(const FTransform& Transform) override;
+	void UpdateHandlersTransformCDO();
 #endif // WITH_EDITOR
 
 };

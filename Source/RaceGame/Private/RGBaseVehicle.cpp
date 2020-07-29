@@ -103,7 +103,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 		FrontLeftHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		BackLeftHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-		UpdateVisualHandlers();
+		UpdateHandlersTransformCDO();
 	}
 #endif //WITH_EDITOR
 
@@ -553,16 +553,15 @@ void ARGBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 			// Compute WalkableFloorZ from the Angle.
 			SetWalkableFloorAngle(WalkableFloorAngle);
 		}
-
-		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, SuspensionLength) ||
-			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, BackLeft) ||
-			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, BackRight) ||
-			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, FrontLeft) ||
-			PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, FrontRight))
+		
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, SuspensionLength))
 		{
-			UpdateVisualHandlers();
+			BackRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+			FrontRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+			FrontLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+			BackLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
 		}
-
+		
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(ARGBaseVehicle, bHideHelpHandlersInPIE))
 		{
 			BackRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
@@ -574,9 +573,37 @@ void ARGBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 }
 
 
-void ARGBaseVehicle::UpdateVisualHandlers()
+void ARGBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
 {
-	// Before calling this function be sure your position vectors have the right value
+	Super::PreSave(TargetPlatform);
+	BackRight = BackRightHandle->GetRelativeLocation();
+	FrontRight = FrontRightHandle->GetRelativeLocation();
+	FrontLeft = FrontLeftHandle->GetRelativeLocation();
+	BackLeft = BackLeftHandle->GetRelativeLocation();
+
+	// Ensure values in the CDO are correct
+	UpdateHandlersTransformCDO();
+}
+
+
+void ARGBaseVehicle::OnConstruction(const FTransform& Transform)
+{
+	// We won't allow the user to scale the handlers
+	BackRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+	FrontRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+	FrontLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+	BackLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+
+	// We don't allow the user to rotate the handlers
+	BackRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
+	FrontRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
+	FrontLeftHandle->SetRelativeRotation(FRotator::ZeroRotator);
+	BackLeftHandle->SetRelativeRotation(FRotator::ZeroRotator);
+}
+
+
+void ARGBaseVehicle::UpdateHandlersTransformCDO()
+{
 	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
 	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
 	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));

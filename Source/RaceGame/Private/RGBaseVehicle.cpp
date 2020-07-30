@@ -38,6 +38,8 @@ ARGBaseVehicle::ARGBaseVehicle()
 	EngineDecceleration = 1000.f;
 	MaxSpeed = 2000.0f;
 	MaxSpeedBoosting = 3000.f;
+	CurrentAngularSpeed = 0.f;
+	CurrentHorizontalSpeed = 0.f;
 	// Maximum speed that can ever be achieved, accelerating or not.
 	TerminalSpeed = 3500.f;
 	bIsBoosting = false;
@@ -186,6 +188,8 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Calc velocities and Speed
 	CurrentHorizontalVelocity = FVector::VectorPlaneProject(RootBodyInstance->GetUnrealWorldVelocity(), RGUpVector);
 	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
+	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
+	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
 
 	// Input processing
 	ApplyInputStack();
@@ -408,12 +412,13 @@ void ARGBaseVehicle::ApplyInputStack()
 	}
 
 	// Steering
-	if (FMath::Abs(CurrentSteeringAxis) >= 0.1f)
+	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
+		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
 	{
 		const float AlphaInputTorque = SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f));
 		const float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
-		const float DirectionFactor = DirectionSign == 0 ? 1.f : DirectionSign;
+		const float DirectionFactor = (DirectionSign == 0 || !bIsMovingOnGround) ? 1.f : DirectionSign;
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
 	}
 

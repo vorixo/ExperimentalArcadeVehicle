@@ -198,6 +198,12 @@ protected:
 	float CurrentHorizontalSpeed;
 
 	UPROPERTY()
+	FVector CurrentAngularVelocity;
+
+	UPROPERTY()
+	float CurrentAngularSpeed;
+
+	UPROPERTY()
 	TArray<FCachedSuspensionInfo> CachedSuspensionInfo;
 
 	UPROPERTY()

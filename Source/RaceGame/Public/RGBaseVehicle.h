@@ -20,7 +20,7 @@
 #define DEFAULT_GROUND_RESISTANCE 1
 #define REPULSIVE_FORCE_MAX_WALKABLE_ANGLE 1000
 #define ANTI_ROLL_FORCE 2000
-#define TERMINAL_VELOCITY_PREEMPTION_FORCE 2000.f
+#define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
 
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
 
@@ -139,20 +139,31 @@ public:
 	void SetBrakeInput(float InputAxis);
 
 	UFUNCTION()
-	void ApplyInputStack();
+	void ApplyInputStack(float DeltaTime);
 
 	/** Gets you whatever max speed is being used*/
 	UFUNCTION(BlueprintPure)
 	float GetMaxSpeedAxisIndependent() const;
 
+	/** Computes the current forward speed based on the acceleration curve */
+	UFUNCTION(BlueprintPure)
+	float GetComputedSpeed() const;
+
 	UFUNCTION(BlueprintPure)
 	float getMaxSpeed() const;
+
+	UFUNCTION(BlueprintPure)
+	float GetComputedBackwardsSpeed() const;
+
+	/** Gets you whatever max speed is being used*/
+	UFUNCTION(BlueprintPure)
+	float GetComputedSpeedAxisIndependent() const;
 
 	UFUNCTION(BlueprintPure)
 	float getMaxBackwardsSpeed() const;
 
 	UFUNCTION(BlueprintPure)
-	float getMaxAcceleration() const;
+	float getAcceleration() const;
 
 	UFUNCTION(BlueprintCallable)
 	void SetBoosting(bool inBoost);
@@ -252,7 +263,7 @@ protected:
 	FTransform RGWorldTransform;
 
 	UPROPERTY()
-	FVector LastUpdateVelocity;
+	FVector LastUpdateForce;
 
 	UPROPERTY()
 	bool bIsBoosting;
@@ -263,6 +274,15 @@ protected:
 	/** Resistance imposed by the current ground in which the user is navigating, will be translated to ground linear damping. */
 	UPROPERTY()
 	float CurrentGroundScalarResistance;
+
+	UPROPERTY()
+	float AccelerationAccumulatedTime;
+
+	UPROPERTY()
+	float MaxAccelerationCurveTime;
+
+	UPROPERTY()
+	float MaxSpeed;
 
 public:
 
@@ -336,13 +356,10 @@ public:
 	float AngularDampingAir;
 
 	UPROPERTY(EditDefaultsOnly)
-	float EngineDecceleration;
-
-	UPROPERTY(EditDefaultsOnly)
-	float MaxSpeed;
-
-	UPROPERTY(EditDefaultsOnly)
 	float MaxSpeedBoosting;
+
+	UPROPERTY(EditDefaultsOnly)
+	UCurveFloat* EngineAccelerationCurve;
 
 	UPROPERTY(EditDefaultsOnly)
 	float MaxBackwardsSpeed;
@@ -354,6 +371,9 @@ public:
 	float VehicleAcceleration;
 
 	UPROPERTY(EditDefaultsOnly)
+	float EngineDecceleration;
+
+	UPROPERTY(EditDefaultsOnly)
 	float VehicleBoostAcceleration;
 
 	UPROPERTY(EditDefaultsOnly)
@@ -363,9 +383,6 @@ public:
 	float BackwardsAcceleration;
 
 	UPROPERTY(EditDefaultsOnly)
-	UCurveFloat* EngineDeccelerationCurve;
-
-	UPROPERTY(EditDefaultsOnly)
 	UCurveFloat* SteeringActionCurve;
 
 	UPROPERTY(EditDefaultsOnly)
@@ -373,6 +390,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	float TerminalSpeed;
+
+	UPROPERTY(EditDefaultsOnly)
+	float LegalSpeedOffset;
 
 	UPROPERTY(EditDefaultsOnly)
 	FVector2D AccelerationCenterOfMassOffset;

@@ -35,8 +35,6 @@ ARGBaseVehicle::ARGBaseVehicle()
 	LinearDampingAir = 0.01f;
 	AngularDampingGround = 10.0f;
 	AngularDampingAir = 5.f;
-	EngineDecceleration = 1000.f;
-	MaxSpeed = 2000.0f;
 	MaxSpeedBoosting = 3000.f;
 	CurrentAngularSpeed = 0.f;
 	CurrentHorizontalSpeed = 0.f;
@@ -46,7 +44,7 @@ ARGBaseVehicle::ARGBaseVehicle()
 	CurrentThrottleAxis = 0.f;
 	CurrentBrakeAxis = 0.f;
 	bTiltedThrottle = true;
-	VehicleAcceleration = 1500.f;
+	VehicleAcceleration = 5000.f;
 	VehicleBoostAcceleration = 3000.f;
 	MaxBackwardsSpeed = 2000.f;
 	TorqueSpeed = 12.f;
@@ -59,6 +57,10 @@ ARGBaseVehicle::ARGBaseVehicle()
 	RGForwardVector = FVector::ZeroVector;
 	CurrentGroundFriction = 1.f;
 	CurrentGroundScalarResistance = 0.f;
+	LastUpdateForce = FVector::ZeroVector;
+	AccelerationAccumulatedTime = 0.f;
+	EngineDecceleration = 1500.f;
+	LegalSpeedOffset = 100.f;
 	SetWalkableFloorZ(0.71f);
 
 
@@ -145,6 +147,18 @@ void ARGBaseVehicle::BeginPlay()
 	if (PawnRootComponent != NULL) 
 	{
 		CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
+		
+		// Initializing acceleration curves
+		if (EngineAccelerationCurve)
+		{
+			MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
+			MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
+		}
+
+	#if WITH_EDITOR
+		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, MaxBackwardsSpeed), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
+	#endif
+
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 	}
 
@@ -192,7 +206,7 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
 
 	// Input processing
-	ApplyInputStack();
+	ApplyInputStack(SubstepDeltaTime);
 
 
 	ApplySuspensionForces();
@@ -217,17 +231,28 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Throttle force adjustments based on Brake and forward axis values
 	if (!bIsBoosting)
 	{
-		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : EngineDecceleration
-			* EngineDeccelerationCurve->GetFloatValue(FMath::Abs(CurrentHorizontalSpeed) / getMaxSpeed())
-			* FMath::IsNearlyZero(FMath::Abs(CurrentBrakeAxis) + CurrentThrottleAxis)
-			* FMath::Sign(CurrentHorizontalSpeed);
+		const float SpeedRatio = CurrentHorizontalSpeed / getMaxSpeed();
+		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
+		
+		// Wheels will decelerate if no input is applied
+		const float AccumulativeAxisAction = AccelerationAccumulatedTime > MaxAccelerationCurveTime ? MaxAccelerationCurveTime : AccelerationAccumulatedTime + SubstepDeltaTime;
+		AccelerationAccumulatedTime = (AxisAdjustment >= 0.1) ? AccumulativeAxisAction : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(0, MaxAccelerationCurveTime), SpeedRatio);
 
+		// Engine deceleration only if no input is applied whatsoever
+		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : 
+			EngineDecceleration * !(CurrentBrakeAxis <= -0.1 || CurrentThrottleAxis >= 0.1) * FMath::Sign(CurrentHorizontalSpeed);
+
+		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
+		ThrottleForce = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset)) ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
+		// Adjusting Throttle based on engine decceleration values
 		ThrottleForce = bIsMovingOnGround ? ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio) : FVector::ZeroVector;
+
 	}
 	
+	PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
 
 	// Forward and backwards speed work with 0 damping.
-	RootBodyInstance->LinearDamping = bIsMovingOnGround ? CurrentGroundScalarResistance : LinearDampingAir;
+	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
 	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
 	RootBodyInstance->UpdateDampingProperties();
 
@@ -247,11 +272,11 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 	
 
-	// -- WIP -- Terminal speed system (See https://github.com/vorixo/ExperimentalArcadeVehicle/commit/521409fe4de12ab0a9a2587bae42e2cd71e88c14 to find the engine deceleration approach) 
-	if (FMath::Abs(CurrentHorizontalSpeed) > GetMaxSpeedAxisIndependent())
+	// Vehicles can go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
+	if (FMath::Abs(CurrentHorizontalSpeed) > FMath::Min(GetMaxSpeedAxisIndependent(), GetTerminalSpeed()))
 	{
 		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetMaxSpeedAxisIndependent());
-		const float TerminalVelocityPreemptionFinalForce = FMath::Lerp(0.f, TERMINAL_VELOCITY_PREEMPTION_FORCE, BlendAlpha);
+		const float TerminalVelocityPreemptionFinalForce = FMath::Abs(CurrentHorizontalSpeed) > GetTerminalSpeed() ? BIG_NUMBER : FMath::Lerp(0.f, GetTerminalSpeed() + TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET, BlendAlpha);
 		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
 	
@@ -267,9 +292,9 @@ void ARGBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 
 	// TODO: Vehicle Effects
+	LastUpdateForce = ThrottleForce;
 	ThrottleForce = FVector::ZeroVector;
 	SteeringForce = FVector::ZeroVector;
-	LastUpdateVelocity = RootBodyInstance->GetUnrealWorldVelocity_AssumesLocked();
 }
 
 
@@ -396,18 +421,18 @@ void ARGBaseVehicle::SetBrakeInput(float InputAxis)
 }
 
 
-void ARGBaseVehicle::ApplyInputStack()
+void ARGBaseVehicle::ApplyInputStack(float DeltaTime)
 {
 	// Throttle
 	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting) && bIsMovingOnGround)
 	{
 		/** We don't decelerate when we go over max speed, since we want vehicles to gain velocity downhill
 		* The terminal will be the maximum individual top speed that any vehicle can reach in any situation
-		/**/
-		if (CurrentHorizontalSpeed <= getMaxSpeed())
+		**/
+		if (CurrentHorizontalSpeed <= GetComputedSpeed())
 		{
 			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
-			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getMaxAcceleration() * MaxThrottleRatio;
+			ThrottleForce =  FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
 		}
 	}
 
@@ -427,7 +452,7 @@ void ARGBaseVehicle::ApplyInputStack()
 	{
 		if (CurrentHorizontalSpeed <= 0.0)
 		{
-			if (FMath::Abs(CurrentHorizontalSpeed) <= getMaxBackwardsSpeed())
+			if (FMath::Abs(CurrentHorizontalSpeed) <= GetComputedBackwardsSpeed())
 			{
 				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BackwardsAcceleration;
 			}
@@ -447,9 +472,27 @@ float ARGBaseVehicle::GetMaxSpeedAxisIndependent() const
 }
 
 
+float ARGBaseVehicle::GetComputedSpeed() const
+{
+	return bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve->GetFloatValue(AccelerationAccumulatedTime) * CurrentGroundScalarResistance;
+}
+
+
 float ARGBaseVehicle::getMaxSpeed() const
 {
-	return bIsBoosting ? MaxSpeedBoosting : MaxSpeed;
+	return MaxSpeed;
+}
+
+
+float ARGBaseVehicle::GetComputedBackwardsSpeed() const
+{
+	return MaxBackwardsSpeed * CurrentGroundScalarResistance;
+}
+
+
+float ARGBaseVehicle::GetComputedSpeedAxisIndependent() const
+{
+	return CurrentHorizontalSpeed >= 0 ? GetComputedSpeed() : GetComputedBackwardsSpeed();
 }
 
 
@@ -459,7 +502,7 @@ float ARGBaseVehicle::getMaxBackwardsSpeed() const
 }
 
 
-float ARGBaseVehicle::getMaxAcceleration() const
+float ARGBaseVehicle::getAcceleration() const
 {
 	return bIsBoosting ? VehicleBoostAcceleration : VehicleAcceleration;
 }

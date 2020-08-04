@@ -19,9 +19,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	PrimaryActorTick.bCanEverTick = true;
 
 	// Custom Properties
-	SuspensionLength = 60.f;
-	SuspensionStiffness = 2.f;
-	SuspensionDampForce = 1250.f;
+	SuspensionFront = FSuspensionData();
+	SuspensionRear = FSuspensionData();
 	bIsMovingOnGround = false;
 	bIsCloseToGround = false;
 	GravityAir = -980.0;
@@ -147,7 +146,11 @@ void AAVBaseVehicle::BeginPlay()
 	if (PawnRootComponent != NULL) 
 	{
 		CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
-		
+		CachedSuspensionInfo[FRONT_LEFT].SuspensionData = SuspensionFront;
+		CachedSuspensionInfo[FRONT_RIGHT].SuspensionData = SuspensionFront;
+		CachedSuspensionInfo[BACK_LEFT].SuspensionData = SuspensionRear;
+		CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
+
 		// Initializing acceleration curves
 		if (EngineAccelerationCurve)
 		{
@@ -307,7 +310,7 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	FHitResult OutHit;
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
-		SuspensionRatio = 1 - (OutHit.Distance / SuspensionLength);
+		SuspensionRatio = 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength);
 		FVector LocalImpactPoint(InCachedInfo.ImpactPoint);
 		FVector LocalImpactNormal(InCachedInfo.ImpactNormal);
 
@@ -326,9 +329,9 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 				LocalImpactPoint = OutHit.ImpactPoint;
 				LocalImpactNormal = OutHit.ImpactNormal;
 
-				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * SuspensionStiffness;
+				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
 				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-				const FVector FinalForce = (RGUpVector * (SuspensionRatio * SuspensionDampForce)) - ForceDownwards;
+				const FVector FinalForce = (RGUpVector * (SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
 				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
 
 			}
@@ -602,12 +605,13 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 			SetWalkableFloorAngle(WalkableFloorAngle);
 		}
 		
-		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionLength))
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.SuspensionLength)
+			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.SuspensionLength))
 		{
-			BackRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-			FrontRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-			FrontLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-			BackLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+			BackRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f));
+			FrontRightHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f));
+			FrontLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f));
+			BackLeftHandle->SetRelativeScale3D( FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f));
 		}
 		
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, bHideHelpHandlersInPIE))
@@ -637,10 +641,10 @@ void AAVBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
 void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 {
 	// We won't allow the user to scale the handlers
-	BackRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-	FrontRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-	FrontLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
-	BackLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionLength / 100.f));
+	BackRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f));
+	FrontRightHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f));
+	FrontLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f));
+	BackLeftHandle->SetRelativeScale3D(FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f));
 
 	// We don't allow the user to rotate the handlers
 	BackRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
@@ -652,10 +656,10 @@ void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 
 void AAVBaseVehicle::UpdateHandlersTransformCDO()
 {
-	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
-	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
-	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
-	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(0.05f, 0.05f, SuspensionLength / 100.f)));
+	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f)));
+	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f)));
+	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(0.05f, 0.05f, SuspensionFront.SuspensionLength / 100.f)));
+	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(0.05f, 0.05f, SuspensionRear.SuspensionLength / 100.f)));
 }
 #endif // WITH_EDITOR
 

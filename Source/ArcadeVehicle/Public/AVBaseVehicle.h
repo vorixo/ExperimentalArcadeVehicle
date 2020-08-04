@@ -58,6 +58,31 @@ public:
 };
 
 USTRUCT()
+struct ARCADEVEHICLE_API FSuspensionData
+{
+	GENERATED_USTRUCT_BODY()
+
+public:
+
+	UPROPERTY(EditDefaultsOnly)
+	float SuspensionLength;
+
+	UPROPERTY(EditDefaultsOnly)
+	float SuspensionStiffness;
+
+	UPROPERTY(EditDefaultsOnly)
+	float SuspensionDampForce;
+
+	FSuspensionData() :
+		SuspensionLength(60.f),
+		SuspensionStiffness(4.f),
+		SuspensionDampForce(1250.f)
+	{
+
+	}
+};
+
+USTRUCT()
 struct ARCADEVEHICLE_API FCachedSuspensionInfo
 {
 	GENERATED_USTRUCT_BODY()
@@ -70,13 +95,13 @@ public:
 	UPROPERTY()
 	FVector ImpactNormal;
 
-	//UPROPERTY()
-	//float SuspensionRatio;
+	UPROPERTY()
+	FSuspensionData SuspensionData;
 
 	FCachedSuspensionInfo() :
 		ImpactPoint(FVector::ZeroVector),
-		ImpactNormal(FVector::ZeroVector)
-		//SuspensionRatio(0.f)
+		ImpactNormal(FVector::ZeroVector),
+		SuspensionData(FSuspensionData())
 	{
 
 	}
@@ -322,14 +347,11 @@ public:
 	FVector BackLeft;
 	// These will spawn the traces
 
-	UPROPERTY(EditDefaultsOnly)
-	float SuspensionLength;
+	UPROPERTY(EditDefaultsOnly, Category = SuspensionFront)
+	FSuspensionData SuspensionFront;
 
-	UPROPERTY(EditDefaultsOnly)
-	float SuspensionStiffness;
-
-	UPROPERTY(EditDefaultsOnly)
-	float SuspensionDampForce;
+	UPROPERTY(EditDefaultsOnly, Category = SuspensionRear)
+	FSuspensionData SuspensionRear;
 
 	UPROPERTY(EditDefaultsOnly)
 	float GravityAir;

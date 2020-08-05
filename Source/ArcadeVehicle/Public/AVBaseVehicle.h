@@ -19,7 +19,7 @@
 #define DEFAULT_GROUND_FRICTION 1
 #define DEFAULT_GROUND_RESISTANCE 1
 #define REPULSIVE_FORCE_MAX_WALKABLE_ANGLE 1000
-#define ANTI_ROLL_FORCE 2000
+#define ANTI_ROLL_FORCE 20000
 #define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
 
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
@@ -194,7 +194,7 @@ public:
 	void SetBoosting(bool inBoost);
 
 	UFUNCTION(BlueprintCallable)
-	void ApplyGravityForce();
+	void ApplyGravityForce(float DeltaTime);
 
 	UFUNCTION(BlueprintPure)
 	float GetTerminalSpeed() const;
@@ -374,7 +374,7 @@ public:
 	UPROPERTY(EditDefaultsOnly)
 	float AngularDampingGround;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "1.0", ClampMax = "100.0", UIMin = "1.0", UIMax = "100.0"))
 	float AngularDampingAir;
 
 	UPROPERTY(EditDefaultsOnly)

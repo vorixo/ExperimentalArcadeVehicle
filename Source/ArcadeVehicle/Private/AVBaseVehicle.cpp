@@ -217,7 +217,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/************************************************************************/
 	/* Apply gravity and sliding forces                                     */
 	/************************************************************************/
-	ApplyGravityForce();
+	ApplyGravityForce(SubstepDeltaTime);
 
 	if (bIsMovingOnGround)
 	{
@@ -311,8 +311,8 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
 		SuspensionRatio = 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength);
-		FVector LocalImpactPoint(InCachedInfo.ImpactPoint);
-		FVector LocalImpactNormal(InCachedInfo.ImpactNormal);
+		FVector LocalImpactPoint(bIsMovingOnGround ? OutHit.ImpactPoint : InCachedInfo.ImpactPoint);  // Maybe I can use OutHit directly. (Study aerial phys model)
+		FVector LocalImpactNormal(bIsMovingOnGround ? OutHit.ImpactNormal : InCachedInfo.ImpactNormal);
 
 		if (SuspensionRatio > 0.f)
 		{
@@ -320,20 +320,16 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 
 			if (!bIsWalkable) 
 			{
+				// fixmevori: Find a most appropiate way, wheels should not clip the terrain instead they should avoid any kind of throttle towards the non walkable surface: counterforce in the opposite of the velocity vector??
 				// If the surface isn't walkable we compute a repulsive force towards the normal to make the vehicle get in a valid position 
 				RootBodyInstance->AddForce(OutHit.ImpactNormal * REPULSIVE_FORCE_MAX_WALKABLE_ANGLE, false);
 			}
 			else
 			{
-
-				LocalImpactPoint = OutHit.ImpactPoint;
-				LocalImpactNormal = OutHit.ImpactNormal;
-
 				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
 				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
 				const FVector FinalForce = (RGUpVector * (SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
 				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
-
 			}
 
 			#if ENABLE_DRAW_DEBUG
@@ -517,12 +513,12 @@ void AAVBaseVehicle::SetBoosting(bool inBoost)
 }
 
 
-void AAVBaseVehicle::ApplyGravityForce()
+void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 {
 	FVector GravityForce = FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
 	FVector CorrectionalUpVectorFlippingForce = FVector::UpVector;
 
-	if (bStickyWheels && bIsCloseToGround) 
+	if (bStickyWheels && bIsCloseToGround && !AvgedNormals.IsZero()) 
 	{
 		GravityForce = AvgedNormals * (bIsMovingOnGround ? GravityGround : GravityAir);
 		CorrectionalUpVectorFlippingForce = AvgedNormals;	
@@ -533,8 +529,8 @@ void AAVBaseVehicle::ApplyGravityForce()
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		const FVector FlipForce = FVector::VectorPlaneProject(RGUpVector * -1, CorrectionalUpVectorFlippingForce) * ANTI_ROLL_FORCE * MappedDotProduct;
-		RootBodyInstance->AddForceAtPosition(FlipForce, RGLocation + (CorrectionalUpVectorFlippingForce *  100.f), false);
+		RootBodyInstance->AddTorqueInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * (ANTI_ROLL_FORCE * AngularDampingGround) * MappedDotProduct, false);
+		// RootBodyInstance->SetAngularVelocityInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * 300 * DeltaTime, false); // fixmevori: explore hardcore allignment solution with input vectors passed in
 	}
 
 	RootBodyInstance->AddForce(GravityForce, false, false);

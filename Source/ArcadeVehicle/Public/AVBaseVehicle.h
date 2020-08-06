@@ -82,17 +82,17 @@ public:
 	}
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct ARCADEVEHICLE_API FCachedSuspensionInfo
 {
 	GENERATED_USTRUCT_BODY()
 
 public:
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector ImpactPoint;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector ImpactNormal;
 
 	UPROPERTY()
@@ -238,9 +238,6 @@ protected:
 
 	UPROPERTY()
 	float CurrentAngularSpeed;
-
-	UPROPERTY()
-	TArray<FCachedSuspensionInfo> CachedSuspensionInfo;
 
 	UPROPERTY()
 	float SuspensionRatio;
@@ -418,6 +415,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	FVector2D AccelerationCenterOfMassOffset;
+
+	UPROPERTY(BlueprintReadOnly) // fixmevori: accessor
+	TArray<FCachedSuspensionInfo> CachedSuspensionInfo;
 
 private:
 	/**

@@ -311,8 +311,6 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
 		SuspensionRatio = 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength);
-		FVector LocalImpactPoint(bIsMovingOnGround ? OutHit.ImpactPoint : InCachedInfo.ImpactPoint);  // Maybe I can use OutHit directly. (Study aerial phys model)
-		FVector LocalImpactNormal(bIsMovingOnGround ? OutHit.ImpactNormal : InCachedInfo.ImpactNormal);
 
 		if (SuspensionRatio > 0.f)
 		{
@@ -350,8 +348,8 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 		}		
 		sHitInfo.bTraceHit = true;
 
-		InCachedInfo.ImpactNormal = LocalImpactNormal;
-		InCachedInfo.ImpactPoint = LocalImpactPoint;
+		InCachedInfo.ImpactNormal = OutHit.ImpactNormal;
+		InCachedInfo.ImpactPoint = OutHit.ImpactPoint;
 		return sHitInfo;
 	}
 
@@ -404,19 +402,19 @@ FVector AAVBaseVehicle::GetOffsetedCenterOfVehicle() const
 
 void AAVBaseVehicle::SetThrottleInput(float InputAxis)
 {
-	CurrentThrottleAxis = InputAxis;
+	CurrentThrottleAxis = FMath::Clamp(InputAxis, 0.f, 1.f);
 }
 
 
 void AAVBaseVehicle::SetSteeringInput(float InputAxis)
 {
-	CurrentSteeringAxis = InputAxis;
+	CurrentSteeringAxis = FMath::Clamp(InputAxis, -1.f,1.f);
 }
 
 
 void AAVBaseVehicle::SetBrakeInput(float InputAxis)
 {
-	CurrentBrakeAxis = InputAxis;
+	CurrentBrakeAxis = FMath::Clamp(InputAxis, -1.f, 0.f);
 }
 
 
@@ -529,8 +527,8 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		RootBodyInstance->AddTorqueInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * (ANTI_ROLL_FORCE * AngularDampingGround) * MappedDotProduct, false);
-		// RootBodyInstance->SetAngularVelocityInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * 300 * DeltaTime, false); // fixmevori: explore hardcore allignment solution with input vectors passed in
+		// RootBodyInstance->AddTorqueInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * (ANTI_ROLL_FORCE * AngularDampingGround) * MappedDotProduct, false);
+		RootBodyInstance->SetAngularVelocityInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(300.f, 5000.f, MappedDotProduct) * DeltaTime, false);
 	}
 
 	RootBodyInstance->AddForce(GravityForce, false, false);

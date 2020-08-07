@@ -60,6 +60,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	AccelerationAccumulatedTime = 0.f;
 	EngineDecceleration = 1500.f;
 	LegalSpeedOffset = 100.f;
+	bCompletelyInTheAir = false;
 	SetWalkableFloorZ(0.71f);
 
 
@@ -308,14 +309,17 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	FSuspensionHitInfo sHitInfo;
 
 	FHitResult OutHit;
+	InCachedInfo.SuspensionRatio = 0.f;
+	
 	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
-		SuspensionRatio = 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength);
+		InCachedInfo.SuspensionRatio = FMath::Max(0.f, 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength));
 
-		if (SuspensionRatio > 0.f)
+		if (InCachedInfo.SuspensionRatio > 0.f)
 		{
-			const bool bIsWalkable = bStickyWheels ? FMath::Abs(FVector::DotProduct(RGForwardVector, OutHit.ImpactNormal)) < WalkableFloorZ : OutHit.ImpactNormal.Z >= WalkableFloorZ;
+			//const bool bIsWalkable = bStickyWheels ? FMath::Abs(FVector::DotProduct(RGForwardVector, OutHit.ImpactNormal)) < WalkableFloorZ : OutHit.ImpactNormal.Z >= WalkableFloorZ;
 
+			/*
 			if (!bIsWalkable) 
 			{
 				// fixmevori: Find a most appropiate way, wheels should not clip the terrain instead they should avoid any kind of throttle towards the non walkable surface: counterforce in the opposite of the velocity vector??
@@ -323,18 +327,18 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 				RootBodyInstance->AddForce(OutHit.ImpactNormal * REPULSIVE_FORCE_MAX_WALKABLE_ANGLE, false);
 			}
 			else
-			{
+			{*/
 				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
 				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-				const FVector FinalForce = (RGUpVector * (SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
+				const FVector FinalForce = (RGUpVector * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
 				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
-			}
+			//}
 
 			#if ENABLE_DRAW_DEBUG
 			if (bDebugInfo)
 			{
 				UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
-				if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
+				if (World) UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(InCachedInfo.SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
 			}
 			#endif
 
@@ -365,7 +369,10 @@ void AAVBaseVehicle::ApplySuspensionForces()
 	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT]);
 	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT]);
 
-	bIsMovingOnGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround) > 2;
+	
+	const uint8 WheelsTouchingTheGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround);
+	bIsMovingOnGround = WheelsTouchingTheGround > 2;
+	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
 	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
@@ -511,6 +518,18 @@ void AAVBaseVehicle::SetBoosting(bool inBoost)
 }
 
 
+bool AAVBaseVehicle::GetStickyWheels() const
+{
+	return bStickyWheels;
+}
+
+
+void AAVBaseVehicle::SetStickyWheels(bool inStickyWheels)
+{
+	bStickyWheels = inStickyWheels;
+}
+
+
 void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 {
 	FVector GravityForce = FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
@@ -523,7 +542,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 	}
 
 	// Roll towards Up Vector
-	if (!bIsMovingOnGround)
+	if (bCompletelyInTheAir)
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);

@@ -57,14 +57,14 @@ public:
 	}
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct ARCADEVEHICLE_API FSuspensionData
 {
 	GENERATED_USTRUCT_BODY()
 
 public:
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SuspensionLength;
 
 	UPROPERTY(EditDefaultsOnly)
@@ -89,18 +89,22 @@ struct ARCADEVEHICLE_API FCachedSuspensionInfo
 
 public:
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	FVector ImpactPoint;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	FVector ImpactNormal;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
+	float SuspensionRatio;
+
+	UPROPERTY(BlueprintReadOnly)
 	FSuspensionData SuspensionData;
 
 	FCachedSuspensionInfo() :
 		ImpactPoint(FVector::ZeroVector),
 		ImpactNormal(FVector::ZeroVector),
+		SuspensionRatio(0.f),
 		SuspensionData(FSuspensionData())
 	{
 
@@ -193,6 +197,12 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetBoosting(bool inBoost);
 
+	UFUNCTION(BlueprintPure)
+	bool GetStickyWheels() const;
+
+	UFUNCTION(BlueprintCallable)
+	void SetStickyWheels(bool inStickyWheels);
+
 	UFUNCTION(BlueprintCallable)
 	void ApplyGravityForce(float DeltaTime);
 
@@ -240,16 +250,18 @@ protected:
 	float CurrentAngularSpeed;
 
 	UPROPERTY()
-	float SuspensionRatio;
-
-	UPROPERTY()
 	float ScalarFrictionVal;
 
 	UPROPERTY()
 	FVector AvgedNormals;
 
+	/* It's true if at least two wheels are touching the ground */
 	UPROPERTY()
 	bool bIsMovingOnGround;
+
+	/* It's true if any wheel is touching the ground */
+	UPROPERTY()
+	bool bCompletelyInTheAir;
 
 	UPROPERTY()
 	bool bIsCloseToGround;

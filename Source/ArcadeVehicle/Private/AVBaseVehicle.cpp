@@ -244,8 +244,8 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 		// Engine deceleration only if no input is applied whatsoever
 		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : 
-			EngineDecceleration * !(CurrentBrakeAxis <= -0.1 || CurrentThrottleAxis >= 0.1) * FMath::Sign(CurrentHorizontalSpeed);
-
+			CurrentHorizontalSpeed * !(CurrentBrakeAxis <= -0.1 || CurrentThrottleAxis >= 0.1) /** FMath::Sign(CurrentHorizontalSpeed)*/;
+		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
 		ThrottleForce = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset)) ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
 		// Adjusting Throttle based on engine decceleration values
@@ -330,7 +330,7 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 			{*/
 				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
 				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-				const FVector FinalForce = (RGUpVector * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
+				const FVector FinalForce = (AvgedNormals * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
 				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
 			//}
 

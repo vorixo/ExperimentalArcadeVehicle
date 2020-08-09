@@ -316,6 +316,12 @@ protected:
 	float MaxAccelerationCurveTime;
 
 	UPROPERTY()
+	float DecelerationAccumulatedTime;
+
+	UPROPERTY()
+	float MaxDecelerationCurveTime;
+
+	UPROPERTY()
 	float MaxSpeed;
 
 public:
@@ -393,6 +399,9 @@ public:
 	UCurveFloat* EngineAccelerationCurve;
 
 	UPROPERTY(EditDefaultsOnly)
+	UCurveFloat* EngineDecelerationCurve;
+
+	UPROPERTY(EditDefaultsOnly)
 	float MaxBackwardsSpeed;
 
 	UPROPERTY(EditDefaultsOnly)
@@ -400,9 +409,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly)
 	float VehicleAcceleration;
-
-	UPROPERTY(EditDefaultsOnly)
-	float EngineDecceleration;
 
 	UPROPERTY(EditDefaultsOnly)
 	float VehicleBoostAcceleration;

@@ -27,7 +27,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	GravityGround = -980.0;
 	// Gameplay driven friction
 	ScalarFrictionVal = 1.f;
-	GroundFriction = 8.f;
+	GroundFriction = 100.f;
 	bStickyWheels = false;
 	// Default to z grav
 	AvgedNormals = FVector::UpVector;
@@ -58,7 +58,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 	CurrentGroundScalarResistance = 0.f;
 	LastUpdateForce = FVector::ZeroVector;
 	AccelerationAccumulatedTime = 0.f;
-	EngineDecceleration = 1500.f;
 	LegalSpeedOffset = 100.f;
 	bCompletelyInTheAir = false;
 	SetWalkableFloorZ(0.71f);
@@ -153,8 +152,9 @@ void AAVBaseVehicle::BeginPlay()
 		CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
 
 		// Initializing acceleration curves
-		if (EngineAccelerationCurve)
+		if (EngineAccelerationCurve && EngineDecelerationCurve)
 		{
+			MaxDecelerationCurveTime = EngineDecelerationCurve->FloatCurve.GetLastKey().Time;
 			MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
 			MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
 		}
@@ -235,25 +235,31 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Throttle force adjustments based on Brake and forward axis values
 	if (!bIsBoosting)
 	{
-		const float SpeedRatio = CurrentHorizontalSpeed / getMaxSpeed();
+		const float SpeedRatio = CurrentHorizontalSpeed / getMaxSpeed(); // fixme: experiment with getmaxspeedaxisindependent
 		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
+		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1);
 		
 		// Wheels will decelerate if no input is applied
-		const float AccumulativeAxisAction = AccelerationAccumulatedTime > MaxAccelerationCurveTime ? MaxAccelerationCurveTime : AccelerationAccumulatedTime + SubstepDeltaTime;
-		AccelerationAccumulatedTime = (AxisAdjustment >= 0.1) ? AccumulativeAxisAction : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(0, MaxAccelerationCurveTime), SpeedRatio);
+		const float AccumulativeAxisAccel = AccelerationAccumulatedTime > MaxAccelerationCurveTime ? MaxAccelerationCurveTime : AccelerationAccumulatedTime + SubstepDeltaTime;
+		AccelerationAccumulatedTime = (AxisAdjustment >= 0.1) ? AccumulativeAxisAccel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(0, MaxAccelerationCurveTime), SpeedRatio);
+		const float AccumulativeAxisDecel = DecelerationAccumulatedTime > MaxDecelerationCurveTime ? MaxDecelerationCurveTime : DecelerationAccumulatedTime + SubstepDeltaTime;
+		DecelerationAccumulatedTime = bNoInput ? AccumulativeAxisDecel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(MaxDecelerationCurveTime, 0), FMath::Abs(SpeedRatio));
+
 
 		// Engine deceleration only if no input is applied whatsoever
-		const float ThrottleAdjustmentRatio = (FMath::Abs(CurrentHorizontalSpeed) <= KINDA_SMALL_NUMBER * 10.f) ? 0.f : 
-			CurrentHorizontalSpeed * !(CurrentBrakeAxis <= -0.1 || CurrentThrottleAxis >= 0.1) /** FMath::Sign(CurrentHorizontalSpeed)*/;
+		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * EngineDecelerationCurve->GetFloatValue(DecelerationAccumulatedTime);
 		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
 		ThrottleForce = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset)) ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
 		// Adjusting Throttle based on engine decceleration values
-		ThrottleForce = bIsMovingOnGround ? ThrottleForce - (RGForwardVector * ThrottleAdjustmentRatio) : FVector::ZeroVector;
+		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : FVector::ZeroVector;
+
+		// PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
+		// PRINT_TICK(CurrentHorizontalVelocity.ToString());
 
 	}
 	
-	PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
+	
 
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;

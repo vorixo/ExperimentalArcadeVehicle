@@ -237,92 +237,95 @@ protected:
 	FBodyInstance* RootBodyInstance;
 	static FBodyInstance* GetBodyInstance(UPrimitiveComponent* PrimitiveComponent);
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector CurrentHorizontalVelocity;
 	
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float CurrentHorizontalSpeed;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector CurrentAngularVelocity;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float CurrentAngularSpeed;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	float ScalarFrictionVal;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector AvgedNormals;
 
 	/* It's true if at least two wheels are touching the ground */
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	bool bIsMovingOnGround;
 
 	/* It's true if any wheel is touching the ground */
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	bool bCompletelyInTheAir;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	bool bIsCloseToGround;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	float CurrentThrottleAxis;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	float CurrentSteeringAxis;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	float CurrentBrakeAxis;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	FVector ThrottleForce;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	FVector SteeringForce;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector RGForwardVector;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector RGUpVector;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector RGRightVector;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector RGLocation;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FTransform RGWorldTransform;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector LastUpdateForce;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	bool bIsBoosting;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float CurrentGroundFriction;
 
 	/** Resistance imposed by the current ground in which the user is navigating, will be translated to ground linear damping. */
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite)
 	float CurrentGroundScalarResistance;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float AccelerationAccumulatedTime;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float MaxAccelerationCurveTime;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float DecelerationAccumulatedTime;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float MaxDecelerationCurveTime;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	float MaxSpeed;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	bool bStickyWheels;
 
 public:
 
@@ -349,16 +352,16 @@ public:
 	UStaticMeshComponent* CollisionMesh;
 
 	// These four properties are really relevant: for visualization: Category = HoverComponent, VisibleAnywhere
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector BackRight;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector FrontRight;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector FrontLeft;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	FVector BackLeft;
 	// These will spawn the traces
 
@@ -368,70 +371,67 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionRear)
 	FSuspensionData SuspensionRear;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityAir;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityGround;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GroundFriction;
 
-	UPROPERTY(EditDefaultsOnly)
-	bool bStickyWheels;
-
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float StickyWheelsGroundDistanceThreshold;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LinearDampingAir;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float AngularDampingGround;
 
-	UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "1.0", ClampMax = "100.0", UIMin = "1.0", UIMax = "100.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (ClampMin = "1.0", ClampMax = "100.0", UIMin = "1.0", UIMax = "100.0"))
 	float AngularDampingAir;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float MaxSpeedBoosting;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* EngineAccelerationCurve;
 
-	UPROPERTY(EditDefaultsOnly)
-	UCurveFloat* EngineDecelerationCurve;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UCurveFloat* EngineDecelerationCurve; 
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float MaxBackwardsSpeed;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float TorqueSpeed;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float VehicleAcceleration;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float VehicleBoostAcceleration;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float BrakinDeceleration;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float BackwardsAcceleration;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* SteeringActionCurve;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bTiltedThrottle;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float TerminalSpeed;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LegalSpeedOffset;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	FVector2D AccelerationCenterOfMassOffset;
 
 	UPROPERTY(BlueprintReadOnly) // fixmevori: accessor

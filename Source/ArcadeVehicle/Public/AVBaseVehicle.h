@@ -179,6 +179,9 @@ public:
 	float GetComputedSpeed() const;
 
 	UFUNCTION(BlueprintPure)
+	float GetDecelerationRatio() const;
+
+	UFUNCTION(BlueprintPure)
 	float getMaxSpeed() const;
 
 	UFUNCTION(BlueprintPure)

@@ -152,12 +152,28 @@ void AAVBaseVehicle::BeginPlay()
 		CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
 
 		// Initializing acceleration curves
-		if (EngineAccelerationCurve && EngineDecelerationCurve)
+		if (EngineAccelerationCurve)
 		{
-			MaxDecelerationCurveTime = EngineDecelerationCurve->FloatCurve.GetLastKey().Time;
 			MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
 			MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
 		}
+		else 
+		{
+			MaxAccelerationCurveTime = 1.f;
+			MaxSpeed = 2000.f;
+			UE_LOG(LogTemp, Warning, TEXT("EngineAccelerationCurve missing, assuming default values."));
+		}
+		
+		if (EngineDecelerationCurve)
+		{
+			MaxDecelerationCurveTime = EngineDecelerationCurve->FloatCurve.GetLastKey().Time;
+		}
+		else
+		{
+			MaxDecelerationCurveTime = 1.f;
+			UE_LOG(LogTemp, Warning, TEXT("EngineDecelerationCurve missing, assuming default values."));
+		}
+
 
 	#if WITH_EDITOR
 		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, MaxBackwardsSpeed), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
@@ -247,16 +263,12 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 
 		// Engine deceleration only if no input is applied whatsoever
-		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * EngineDecelerationCurve->GetFloatValue(DecelerationAccumulatedTime);
+		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * GetDecelerationRatio();
 		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
 		ThrottleForce = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset)) ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
 		// Adjusting Throttle based on engine decceleration values
 		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : FVector::ZeroVector;
-
-		// PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
-		// PRINT_TICK(CurrentHorizontalVelocity.ToString());
-
 	}
 	
 	
@@ -282,7 +294,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 	
 
-	// Vehicles can go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
+	// Vehicles can't go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
 	if (FMath::Abs(CurrentHorizontalSpeed) > FMath::Min(GetMaxSpeedAxisIndependent(), GetTerminalSpeed()))
 	{
 		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetMaxSpeedAxisIndependent());
@@ -484,7 +496,18 @@ float AAVBaseVehicle::GetMaxSpeedAxisIndependent() const
 
 float AAVBaseVehicle::GetComputedSpeed() const
 {
+	if (!EngineAccelerationCurve)
+	{
+		return bIsBoosting ? MaxSpeedBoosting : MaxSpeed * AccelerationAccumulatedTime * CurrentGroundScalarResistance;
+	}
+
 	return bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve->GetFloatValue(AccelerationAccumulatedTime) * CurrentGroundScalarResistance;
+}
+
+
+float AAVBaseVehicle::GetDecelerationRatio() const
+{
+	return EngineDecelerationCurve ? EngineDecelerationCurve->GetFloatValue(DecelerationAccumulatedTime) : DecelerationAccumulatedTime;
 }
 
 

@@ -174,6 +174,12 @@ void AAVBaseVehicle::BeginPlay()
 			UE_LOG(LogTemp, Warning, TEXT("EngineDecelerationCurve missing, assuming default values."));
 		}
 
+		if (!SteeringActionCurve)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SteeringActionCurve missing, assuming default values."));
+		}
+
+
 
 	#if WITH_EDITOR
 		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, MaxBackwardsSpeed), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
@@ -462,7 +468,7 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
 		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
 	{
-		const float AlphaInputTorque = SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f));
+		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
 		const float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
 		const float DirectionFactor = (DirectionSign == 0 || !bIsMovingOnGround) ? 1.f : DirectionSign;

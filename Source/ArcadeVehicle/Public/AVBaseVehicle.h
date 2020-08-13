@@ -50,8 +50,8 @@ public:
 	FSuspensionHitInfo() : 
 		bWheelOnGround(false),
 		bTraceHit(false),
-		GroundFriction(1.0f),
-		GroundResistance(0.0f)
+		GroundFriction(DEFAULT_GROUND_FRICTION),
+		GroundResistance(DEFAULT_GROUND_RESISTANCE)
 	{
 
 	}
@@ -267,6 +267,9 @@ protected:
 	bool bCompletelyInTheAir;
 
 	UPROPERTY(BlueprintReadOnly)
+	bool bCompletelyInTheGround;
+
+	UPROPERTY(BlueprintReadOnly)
 	bool bIsCloseToGround;
 
 	UPROPERTY(BlueprintReadWrite)
@@ -302,7 +305,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	FVector LastUpdateForce;
 
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadOnly)
 	bool bIsBoosting;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -409,6 +412,12 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float TorqueSpeed;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float AirYawSpeed;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float AirStrafeSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float VehicleAcceleration;

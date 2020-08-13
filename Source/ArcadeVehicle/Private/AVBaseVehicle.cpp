@@ -54,12 +54,15 @@ AAVBaseVehicle::AAVBaseVehicle()
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
 	RGForwardVector = FVector::ZeroVector;
-	CurrentGroundFriction = 1.f;
-	CurrentGroundScalarResistance = 0.f;
+	CurrentGroundFriction = DEFAULT_GROUND_FRICTION;
+	CurrentGroundScalarResistance = DEFAULT_GROUND_RESISTANCE;
 	LastUpdateForce = FVector::ZeroVector;
 	AccelerationAccumulatedTime = 0.f;
 	LegalSpeedOffset = 100.f;
 	bCompletelyInTheAir = false;
+	bCompletelyInTheGround = true;
+	AirYawSpeed = 20.f;
+	AirStrafeSpeed = 1000.f;
 	SetWalkableFloorZ(0.71f);
 
 
@@ -255,8 +258,8 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/************************************************************************/
 
 	// Throttle force adjustments based on Brake and forward axis values
-	if (!bIsBoosting)
-	{
+	//if (!bIsBoosting)
+	//{
 		const float SpeedRatio = CurrentHorizontalSpeed / getMaxSpeed(); // fixme: experiment with getmaxspeedaxisindependent
 		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
 		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1);
@@ -272,16 +275,18 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * GetDecelerationRatio();
 		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
-		ThrottleForce = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset)) ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
+		const bool bIsGoingOverLegalSpeed = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
+		ThrottleForce = bIsGoingOverLegalSpeed ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
+
 		// Adjusting Throttle based on engine decceleration values
-		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : FVector::ZeroVector;
-	}
+		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : ThrottleForce;
+	//}
 	
 	
 
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
-	RootBodyInstance->AngularDamping = bIsMovingOnGround ? AngularDampingGround : AngularDampingAir;
+	RootBodyInstance->AngularDamping = bCompletelyInTheGround ? AngularDampingGround : AngularDampingAir;
 	RootBodyInstance->UpdateDampingProperties();
 
 
@@ -397,6 +402,7 @@ void AAVBaseVehicle::ApplySuspensionForces()
 	const uint8 WheelsTouchingTheGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround);
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
+	bCompletelyInTheGround = WheelsTouchingTheGround == NUMBER_OF_WHEELS;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
 	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
@@ -468,10 +474,20 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
 		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
 	{
-		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
-		const float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
+		// Direction Calc
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
 		const float DirectionFactor = (DirectionSign == 0 || !bIsMovingOnGround) ? 1.f : DirectionSign;
+		// Steering acceleration
+		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
+		float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
+		
+		if (bCompletelyInTheAir)
+		{
+			// Air steering input stack
+			InputTorqueRatio = CurrentSteeringAxis * AirYawSpeed;
+			ThrottleForce = CurrentSteeringAxis * RGRightVector * AirStrafeSpeed;
+		}
+		
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
 	}
 
@@ -504,10 +520,10 @@ float AAVBaseVehicle::GetComputedSpeed() const
 {
 	if (!EngineAccelerationCurve)
 	{
-		return bIsBoosting ? MaxSpeedBoosting : MaxSpeed * AccelerationAccumulatedTime * CurrentGroundScalarResistance;
+		return bIsBoosting ? MaxSpeed : MaxSpeed * AccelerationAccumulatedTime * CurrentGroundScalarResistance;
 	}
 
-	return bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve->GetFloatValue(AccelerationAccumulatedTime) * CurrentGroundScalarResistance;
+	return bIsBoosting ? MaxSpeed : EngineAccelerationCurve->GetFloatValue(AccelerationAccumulatedTime) * CurrentGroundScalarResistance;
 }
 
 
@@ -543,13 +559,15 @@ float AAVBaseVehicle::getMaxBackwardsSpeed() const
 
 float AAVBaseVehicle::getAcceleration() const
 {
-	return bIsBoosting ? VehicleBoostAcceleration : VehicleAcceleration;
+	return VehicleAcceleration;
 }
 
 
 void AAVBaseVehicle::SetBoosting(bool inBoost)
 {
 	bIsBoosting = inBoost;
+	MaxSpeed = bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve ? 2000.f : EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
+	VehicleAcceleration = bIsBoosting ? VehicleBoostAcceleration : VehicleAcceleration;
 }
 
 
@@ -576,13 +594,16 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 		CorrectionalUpVectorFlippingForce = AvgedNormals;	
 	}
 
-	// Roll towards Up Vector
+	// Air vectors
 	if (bCompletelyInTheAir)
 	{
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		// RootBodyInstance->AddTorqueInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * (ANTI_ROLL_FORCE * AngularDampingGround) * MappedDotProduct, false);
-		RootBodyInstance->SetAngularVelocityInRadians(FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(300.f, 5000.f, MappedDotProduct) * DeltaTime, false);
+		
+		// Anti roll force (the car should be straight!)
+		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(300.f, 3000.f, MappedDotProduct);
+		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
+		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}
 
 	RootBodyInstance->AddForce(GravityForce, false, false);

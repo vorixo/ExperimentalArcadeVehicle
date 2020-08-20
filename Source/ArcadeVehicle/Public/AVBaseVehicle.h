@@ -150,7 +150,7 @@ public:
 	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FCachedSuspensionInfo &InCachedInfo);
 
 	UFUNCTION()
-	void ApplySuspensionForces();
+	virtual void ApplySuspensionForces();
 
 	UFUNCTION(BlueprintNativeEvent, meta = (DisplayName = "TraceFunc"))
 	bool TraceFunc(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit);
@@ -168,7 +168,7 @@ public:
 	void SetBrakeInput(float InputAxis);
 
 	UFUNCTION()
-	void ApplyInputStack(float DeltaTime);
+	virtual void ApplyInputStack(float DeltaTime);
 
 	/** Gets you whatever max speed is being used*/
 	UFUNCTION(BlueprintPure)
@@ -207,7 +207,7 @@ public:
 	void SetStickyWheels(bool inStickyWheels);
 
 	UFUNCTION(BlueprintCallable)
-	void ApplyGravityForce(float DeltaTime);
+	virtual void ApplyGravityForce(float DeltaTime);
 
 	UFUNCTION(BlueprintPure)
 	float GetTerminalSpeed() const;

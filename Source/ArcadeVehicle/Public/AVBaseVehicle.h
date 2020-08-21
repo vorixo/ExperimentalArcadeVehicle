@@ -21,8 +21,12 @@
 #define REPULSIVE_FORCE_MAX_WALKABLE_ANGLE 1000
 #define ANTI_ROLL_FORCE 20000
 #define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
+#define ORIENT_ROTATION_VELOCITY_MAX_RATE 4.f
+
 
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
+#define PRINT_TICK_LOG(x) UKismetSystemLibrary::PrintString(this,x,true,true,FLinearColor::Red, 0.f)
+
 
 #if WITH_EDITOR
 class UArrowComponent;
@@ -221,25 +225,15 @@ public:
 	UFUNCTION(BlueprintPure)
 	float GetTerminalSpeed() const;
 
-	/** Get the max angle in degrees of a walkable surface for the character. */
-	UFUNCTION(BlueprintPure)
-	float GetWalkableFloorAngle() const;
-
-	/** Set the max angle in degrees of a walkable surface for the character. Also computes WalkableFloorZ. */
-	UFUNCTION(BlueprintCallable)
-	void SetWalkableFloorAngle(float InWalkableFloorAngle);
-
-	/** Get the Z component of the normal of the steepest walkable surface for the character. Any lower than this and it is not walkable. */
-	UFUNCTION()
-	float GetWalkableFloorZ() const;
-
-	/** Set the Z component of the normal of the steepest walkable surface for the character. Also computes WalkableFloorAngle. */
-	UFUNCTION(BlueprintCallable)
-	void SetWalkableFloorZ(float InWalkableFloorZ);
-
 	/** Is any brakin force acting over the vehicle? */
 	UFUNCTION(BlueprintPure)
 	bool IsBraking() const;
+
+	/** This function gets called when bIsMovingOnGround becomes true **/
+	virtual void Landed(const FVector& HitNormal);
+
+	UFUNCTION(BlueprintImplementableEvent)
+	void OnLanded(const FVector &HitNormal);
 
 protected:
 	// Reference to MMTPawn root component
@@ -269,17 +263,17 @@ protected:
 
 	/* It's true if at least two wheels are touching the ground */
 	UPROPERTY(BlueprintReadOnly)
-	bool bIsMovingOnGround;
+	uint8 bIsMovingOnGround : 1;
 
 	/* It's true if any wheel is touching the ground */
 	UPROPERTY(BlueprintReadOnly)
-	bool bCompletelyInTheAir;
+	uint8 bCompletelyInTheAir : 1;
 
 	UPROPERTY(BlueprintReadOnly)
-	bool bCompletelyInTheGround;
+	uint8 bCompletelyInTheGround : 1;
 
 	UPROPERTY(BlueprintReadOnly)
-	bool bIsCloseToGround;
+	uint8 bIsCloseToGround : 1;
 
 	UPROPERTY(BlueprintReadWrite)
 	float CurrentThrottleAxis;
@@ -312,9 +306,6 @@ protected:
 	FTransform RGWorldTransform;
 
 	UPROPERTY(BlueprintReadOnly)
-	FVector LastUpdateForce;
-
-	UPROPERTY(BlueprintReadOnly)
 	bool bIsBoosting;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -338,6 +329,13 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly)
 	float MaxSpeed;
+
+	UPROPERTY(BlueprintReadOnly)
+	float TimeFalling;
+	
+	/** 1: Max influence 0: Min Influence **/
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float OrientRotationToMovementInAirInfluenceRate;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
@@ -444,6 +442,9 @@ public:
 	UCurveFloat* SteeringActionCurve;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UCurveFloat* AirControlCurve;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bTiltedThrottle;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
@@ -458,18 +459,8 @@ public:
 	UPROPERTY(BlueprintReadOnly) // fixmevori: accessor
 	TArray<FCachedSuspensionInfo> CachedSuspensionInfo;
 
-private:
-	/**
-	* Max angle in degrees of a walkable surface. Any greater than this and it is too steep to be walkable.
-	*/
-	UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "0.0", ClampMax = "90.0", UIMin = "0.0", UIMax = "90.0"))
-	float WalkableFloorAngle;
-
-	/**
-	 * Minimum Z value for floor normal. If less, not a walkable surface. Computed from WalkableFloorAngle.
-	 */
-	UPROPERTY(VisibleAnywhere)
-	float WalkableFloorZ;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	bool bOrientRotationToMovementInAir;
 
 public:
 

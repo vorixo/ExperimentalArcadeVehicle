@@ -47,6 +47,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	VehicleBoostAcceleration = 3000.f;
 	MaxBackwardsSpeed = 2000.f;
 	TorqueSpeed = 12.f;
+	TimeFalling = 0.f;
 	BrakinDeceleration = 2000.f;
 	BackwardsAcceleration = 1500.f;
 	StickyWheelsGroundDistanceThreshold = 800.f;
@@ -56,14 +57,14 @@ AAVBaseVehicle::AAVBaseVehicle()
 	RGForwardVector = FVector::ZeroVector;
 	CurrentGroundFriction = DEFAULT_GROUND_FRICTION;
 	CurrentGroundScalarResistance = DEFAULT_GROUND_RESISTANCE;
-	LastUpdateForce = FVector::ZeroVector;
 	AccelerationAccumulatedTime = 0.f;
 	LegalSpeedOffset = 100.f;
 	bCompletelyInTheAir = false;
 	bCompletelyInTheGround = true;
 	AirYawSpeed = 20.f;
 	AirStrafeSpeed = 1000.f;
-	SetWalkableFloorZ(0.71f);
+	bOrientRotationToMovementInAir = false;
+	OrientRotationToMovementInAirInfluenceRate = 1.f;
 
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -182,6 +183,10 @@ void AAVBaseVehicle::BeginPlay()
 			UE_LOG(LogTemp, Warning, TEXT("SteeringActionCurve missing, assuming default values."));
 		}
 
+		if (!AirControlCurve)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("AirControlCurve missing, assuming default values."));
+		}
 
 
 	#if WITH_EDITOR
@@ -286,7 +291,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
-	RootBodyInstance->AngularDamping = bCompletelyInTheGround ? AngularDampingGround : AngularDampingAir;
+	RootBodyInstance->AngularDamping = bCompletelyInTheAir ? AngularDampingAir : AngularDampingGround;
 	RootBodyInstance->UpdateDampingProperties();
 
 
@@ -325,7 +330,6 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 
 	// TODO: Vehicle Effects
-	LastUpdateForce = ThrottleForce;
 	ThrottleForce = FVector::ZeroVector;
 	SteeringForce = FVector::ZeroVector;
 }
@@ -346,22 +350,13 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 
 		if (InCachedInfo.SuspensionRatio > 0.f)
 		{
-			//const bool bIsWalkable = bStickyWheels ? FMath::Abs(FVector::DotProduct(RGForwardVector, OutHit.ImpactNormal)) < WalkableFloorZ : OutHit.ImpactNormal.Z >= WalkableFloorZ;
 
-			/*
-			if (!bIsWalkable) 
-			{
-				// fixmevori: Find a most appropiate way, wheels should not clip the terrain instead they should avoid any kind of throttle towards the non walkable surface: counterforce in the opposite of the velocity vector??
-				// If the surface isn't walkable we compute a repulsive force towards the normal to make the vehicle get in a valid position 
-				RootBodyInstance->AddForce(OutHit.ImpactNormal * REPULSIVE_FORCE_MAX_WALKABLE_ANGLE, false);
-			}
-			else
-			{*/
-				const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
-				const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-				const FVector FinalForce = (AvgedNormals * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
-				RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
-			//}
+			// fixmevori: long bounces for long falls. (Get rid of this pls)
+			const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
+			const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
+			const FVector FinalForce = (AvgedNormals * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
+			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
+
 
 			#if ENABLE_DRAW_DEBUG
 			if (bDebugInfo)
@@ -397,8 +392,10 @@ void AAVBaseVehicle::ApplySuspensionForces()
 	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, CachedSuspensionInfo[FRONT_RIGHT]);
 	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT]);
 	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT]);
-
 	
+	// On landing impl. If in the previous step it was in the air and now is in the ground 
+	const bool bWasMovingOnGround = bIsMovingOnGround;
+
 	const uint8 WheelsTouchingTheGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround);
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
@@ -410,6 +407,19 @@ void AAVBaseVehicle::ApplySuspensionForces()
 	AvgedNormals = FVector::ZeroVector;
 	for (FCachedSuspensionInfo csi : CachedSuspensionInfo) AvgedNormals += csi.ImpactNormal;
 	AvgedNormals /= NUMBER_OF_WHEELS;
+
+	// On landed event
+	if (!bWasMovingOnGround && bIsMovingOnGround)
+	{
+		Landed(AvgedNormals);
+	}
+}
+
+
+void AAVBaseVehicle::Landed(const FVector& HitNormal)
+{
+	TimeFalling = 0.f;
+	OnLanded(AvgedNormals);
 }
 
 
@@ -476,16 +486,38 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	{
 		// Direction Calc
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
-		const float DirectionFactor = (DirectionSign == 0 || !bIsMovingOnGround) ? 1.f : DirectionSign;
+		const float DirectionFactor = (DirectionSign == 0 || (CurrentHorizontalSpeed <= 0 && CurrentHorizontalSpeed > -100 && !bIsMovingOnGround) ) ? 1.f : DirectionSign;
 		// Steering acceleration
 		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
 		float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
 		
 		if (bCompletelyInTheAir)
 		{
-			// Air steering input stack
-			InputTorqueRatio = CurrentSteeringAxis * AirYawSpeed;
-			ThrottleForce = CurrentSteeringAxis * RGRightVector * AirStrafeSpeed;
+			// Air steering input stack - fixmevori: experimental curve
+			const float ControlRatio = AirControlCurve ? AirControlCurve->GetFloatValue(TimeFalling) : 1.f;
+			InputTorqueRatio = CurrentSteeringAxis * AirYawSpeed * ControlRatio;
+			
+			if (bOrientRotationToMovementInAir)
+			{
+				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
+				const FVector forward_velocity = (RGForwardVector * forward_signed_speed * DirectionFactor);
+				const FVector non_forward_velocity = CurrentHorizontalVelocity - forward_velocity;
+				if (non_forward_velocity.SizeSquared2D() > 400.f) {
+					ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
+				}
+
+				/* fixmevori: Experimental code, might change to drag and lift force model if i get it working. :)
+				float fMyAwsomeDot=1.0f-(dot(CurrentHorizontalVelocity,RGForwardVector)*0.5f+0.5f);
+				fMyAwsomeDot=Pow(fMyAwsomeDot, fDragRampControl);
+				fMyAwsomeDot*=CurrentHorizontalVelocity.Length();
+				fMyAwsomeDot*=fDragStrengthControl*fMyAwsomeDot;
+				FVector vDragAndLiftForce=-fMyAwsomeDot*CurrentHorizontalVelocity+fMyAwsomeDot*RGForwardVector;
+				*/
+			}
+			else
+			{
+				ThrottleForce = CurrentSteeringAxis * RGRightVector * AirStrafeSpeed * ControlRatio;
+			}
 		}
 		
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
@@ -597,11 +629,13 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 	// Air vectors
 	if (bCompletelyInTheAir)
 	{
+		TimeFalling += DeltaTime;
+
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
 		
 		// Anti roll force (the car should be straight!)
-		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(300.f, 3000.f, MappedDotProduct);
+		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(100.f, 1000.f, MappedDotProduct);
 		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}
@@ -613,32 +647,6 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 float AAVBaseVehicle::GetTerminalSpeed() const
 {
 	return TerminalSpeed;
-}
-
-
-float AAVBaseVehicle::GetWalkableFloorAngle() const
-{
-	return WalkableFloorAngle;
-}
-
-
-void AAVBaseVehicle::SetWalkableFloorAngle(float InWalkableFloorAngle)
-{
-	WalkableFloorAngle = FMath::Clamp(InWalkableFloorAngle, 0.f, 90.0f);
-	WalkableFloorZ = FMath::Cos(FMath::DegreesToRadians(WalkableFloorAngle));
-}
-
-
-float AAVBaseVehicle::GetWalkableFloorZ() const
-{
-	return WalkableFloorZ;
-}
-
-
-void AAVBaseVehicle::SetWalkableFloorZ(float InWalkableFloorZ)
-{
-	WalkableFloorZ = FMath::Clamp(InWalkableFloorZ, 0.f, 1.f);
-	WalkableFloorAngle = FMath::RadiansToDegrees(FMath::Acos(WalkableFloorZ));
 }
 
 
@@ -668,11 +676,6 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 	const FProperty* PropertyThatChanged = PropertyChangedEvent.MemberProperty;
 	if (PropertyThatChanged)
 	{
-		if(PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, WalkableFloorAngle))
-		{
-			// Compute WalkableFloorZ from the Angle.
-			SetWalkableFloorAngle(WalkableFloorAngle);
-		}
 		
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.SuspensionLength)
 			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.SuspensionLength))

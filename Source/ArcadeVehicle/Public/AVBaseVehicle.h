@@ -80,6 +80,15 @@ public:
 	{
 
 	}
+
+	FSuspensionData(float inSuspensionLength, float inSuspensionStiffness, float inSuspensionDampForce) :
+		SuspensionLength(inSuspensionLength),
+		SuspensionStiffness(inSuspensionStiffness),
+		SuspensionDampForce(inSuspensionDampForce)
+	{
+
+	}
+
 };
 
 USTRUCT(BlueprintType)

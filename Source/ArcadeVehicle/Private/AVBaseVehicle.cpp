@@ -484,6 +484,7 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
 		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
 	{
+		// fixmevori: simplify
 		// Direction Calc
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
 		const float DirectionFactor = (DirectionSign == 0 || (CurrentHorizontalSpeed <= 0 && CurrentHorizontalSpeed > -100 && !bIsMovingOnGround) ) ? 1.f : DirectionSign;
@@ -499,19 +500,22 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 			
 			if (bOrientRotationToMovementInAir)
 			{
-				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
-				const FVector forward_velocity = (RGForwardVector * forward_signed_speed * DirectionFactor);
+				// fixmevori: sloppy movement on antiroll.... wtf fix.
+				const float forward_signed_speed = (RGForwardVector.GetSafeNormal2D() | CurrentHorizontalVelocity);
+				const FVector forward_velocity = (RGForwardVector.GetSafeNormal2D() * forward_signed_speed * DirectionFactor);
 				const FVector non_forward_velocity = CurrentHorizontalVelocity - forward_velocity;
-				if (non_forward_velocity.SizeSquared2D() > 400.f) {
+				//if (non_forward_velocity.SizeSquared2D() > 1000.f) {
 					ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
-				}
+				//}
 
-				/* fixmevori: Experimental code, might change to drag and lift force model if i get it working. :)
-				float fMyAwsomeDot=1.0f-(dot(CurrentHorizontalVelocity,RGForwardVector)*0.5f+0.5f);
-				fMyAwsomeDot=Pow(fMyAwsomeDot, fDragRampControl);
-				fMyAwsomeDot*=CurrentHorizontalVelocity.Length();
-				fMyAwsomeDot*=fDragStrengthControl*fMyAwsomeDot;
-				FVector vDragAndLiftForce=-fMyAwsomeDot*CurrentHorizontalVelocity+fMyAwsomeDot*RGForwardVector;
+				// fixmevori: Experimental code, might change to drag and lift force model if i get it working. :)
+				/*
+				float fMyAwsomeDot = 1.0f - (FVector::DotProduct(CurrentHorizontalVelocity.GetSafeNormal2D(), RGForwardVector.GetSafeNormal2D()) * 0.5f + 0.5f);
+				fMyAwsomeDot = FMath::Pow(fMyAwsomeDot, 1);
+				fMyAwsomeDot *= CurrentHorizontalVelocity.Size();
+				fMyAwsomeDot *= 5 * fMyAwsomeDot;
+				FVector vDragAndLiftForce = -fMyAwsomeDot * CurrentHorizontalVelocity + fMyAwsomeDot * RGForwardVector;
+				ThrottleForce = vDragAndLiftForce;
 				*/
 			}
 			else
@@ -598,7 +602,7 @@ float AAVBaseVehicle::getAcceleration() const
 void AAVBaseVehicle::SetBoosting(bool inBoost)
 {
 	bIsBoosting = inBoost;
-	MaxSpeed = bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve ? 2000.f : EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
+	MaxSpeed = bIsBoosting ? MaxSpeedBoosting : EngineAccelerationCurve ? EngineAccelerationCurve->FloatCurve.GetLastKey().Value : 2000.f;
 	VehicleAcceleration = bIsBoosting ? VehicleBoostAcceleration : VehicleAcceleration;
 }
 
@@ -635,7 +639,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
 		
 		// Anti roll force (the car should be straight!)
-		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(100.f, 1000.f, MappedDotProduct);
+		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 2000.f, MappedDotProduct);
 		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}

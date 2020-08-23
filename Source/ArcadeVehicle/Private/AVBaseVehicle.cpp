@@ -71,10 +71,11 @@ AAVBaseVehicle::AAVBaseVehicle()
 	if (CollisionMesh)
 	{
 		CollisionMesh->SetSimulatePhysics(true);
-		CollisionMesh->SetMassOverrideInKg(NAME_None, 1.3f, true);
+		CollisionMesh->BodyInstance.bOverrideMass = true;
+		CollisionMesh->BodyInstance.SetMassOverride(1.3f);
 		CollisionMesh->SetEnableGravity(false);
 		CollisionMesh->bReplicatePhysicsToAutonomousProxy = false;
-		CollisionMesh->SetCenterOfMass(FVector(0.f, 0.f, -20.f));
+		CollisionMesh->BodyInstance.COMNudge = FVector(0.f, 0.f, -20.f);
 		CollisionMesh->SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
 		RootComponent = CollisionMesh;
 	}
@@ -500,13 +501,14 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 			
 			if (bOrientRotationToMovementInAir)
 			{
-				// fixmevori: sloppy movement on antiroll.... wtf fix.
-				const float forward_signed_speed = (RGForwardVector.GetSafeNormal2D() | CurrentHorizontalVelocity);
-				const FVector forward_velocity = (RGForwardVector.GetSafeNormal2D() * forward_signed_speed * DirectionFactor);
+				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
+				const FVector forward_velocity = (RGForwardVector * forward_signed_speed * DirectionFactor);
 				const FVector non_forward_velocity = CurrentHorizontalVelocity - forward_velocity;
 				//if (non_forward_velocity.SizeSquared2D() > 1000.f) {
 					ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
 				//}
+
+				
 
 				// fixmevori: Experimental code, might change to drag and lift force model if i get it working. :)
 				/*
@@ -639,7 +641,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
 		
 		// Anti roll force (the car should be straight!)
-		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 2000.f, MappedDotProduct);
+		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct);
 		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}

@@ -23,6 +23,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	SuspensionRear = FSuspensionData();
 	bIsMovingOnGround = false;
 	bIsCloseToGround = false;
+	bOverRollForceThreshold = false;
 	GravityAir = -980.0;
 	GravityGround = -980.0;
 	// Gameplay driven friction
@@ -33,7 +34,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 	AvgedNormals = FVector::UpVector;
 	LinearDampingAir = 0.01f;
 	AngularDampingGround = 10.0f;
-	AngularDampingAir = 5.f;
 	MaxSpeedBoosting = 3000.f;
 	CurrentAngularSpeed = 0.f;
 	CurrentHorizontalSpeed = 0.f;
@@ -45,12 +45,11 @@ AAVBaseVehicle::AAVBaseVehicle()
 	bTiltedThrottle = true;
 	VehicleAcceleration = 5000.f;
 	VehicleBoostAcceleration = 3000.f;
-	MaxBackwardsSpeed = 2000.f;
 	TorqueSpeed = 12.f;
 	TimeFalling = 0.f;
 	BrakinDeceleration = 2000.f;
-	BackwardsAcceleration = 1500.f;
-	StickyWheelsGroundDistanceThreshold = 800.f;
+	GroundDetectionDistanceThreshold = 800.f;
+	AntiRollForcedDistanceThreshold = 100.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
@@ -160,12 +159,16 @@ void AAVBaseVehicle::BeginPlay()
 		if (EngineAccelerationCurve)
 		{
 			MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
+			MinAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetFirstKey().Time;
 			MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
+			MaxBackwardsSpeed = EngineAccelerationCurve->FloatCurve.GetFirstKey().Value;
 		}
 		else 
 		{
 			MaxAccelerationCurveTime = 1.f;
+			MinAccelerationCurveTime = -1.f;
 			MaxSpeed = 2000.f;
+			MaxBackwardsSpeed = -2000.f;
 			UE_LOG(LogTemp, Warning, TEXT("EngineAccelerationCurve missing, assuming default values."));
 		}
 		
@@ -191,7 +194,7 @@ void AAVBaseVehicle::BeginPlay()
 
 
 	#if WITH_EDITOR
-		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, MaxBackwardsSpeed), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
+		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, FMath::Abs(MaxBackwardsSpeed)), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
 	#endif
 
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
@@ -266,13 +269,25 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Throttle force adjustments based on Brake and forward axis values
 	//if (!bIsBoosting)
 	//{
-		const float SpeedRatio = CurrentHorizontalSpeed / getMaxSpeed(); // fixme: experiment with getmaxspeedaxisindependent
+		/* // Turn deceleration stub
+		const FVector DirectionalVelocity = RGWorldTransform.GetRotation().UnrotateVector(CurrentHorizontalVelocity);
+		const FVector side_velocity = FMath::Abs(DirectionalVelocity.Y) * RGForwardVector;
+		const FVector non_forward_velocity = CurrentHorizontalVelocity.GetSafeNormal2D() * getMaxSpeed() - (side_velocity * 40);
+		const bool bTurnDeceleration = CurrentHorizontalSpeed > non_forward_velocity.Size() && !bIsBoosting;
+
+		if (bTurnDeceleration)
+		{
+			ThrottleForce = (non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * 0.3);
+		}
+		*/
+	
+		const float SpeedRatio = CurrentHorizontalSpeed / GetAbsMaxSpeedAxisIndependent();
 		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
 		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1);
 		
-		// Wheels will decelerate if no input is applied
-		const float AccumulativeAxisAccel = AccelerationAccumulatedTime > MaxAccelerationCurveTime ? MaxAccelerationCurveTime : AccelerationAccumulatedTime + SubstepDeltaTime;
-		AccelerationAccumulatedTime = (AxisAdjustment >= 0.1) ? AccumulativeAxisAccel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(0, MaxAccelerationCurveTime), SpeedRatio);
+		// Clamping curve thresholds
+		const float AccumulativeAxisAccel = FMath::Clamp(AccelerationAccumulatedTime, MinAccelerationCurveTime, MaxAccelerationCurveTime);
+		AccelerationAccumulatedTime = (FMath::IsNearlyZero(AxisAdjustment)) ? FMath::GetMappedRangeValueClamped(FVector2D(-1, 1), FVector2D(MinAccelerationCurveTime, MaxAccelerationCurveTime), SpeedRatio) : AccumulativeAxisAccel;
 		const float AccumulativeAxisDecel = DecelerationAccumulatedTime > MaxDecelerationCurveTime ? MaxDecelerationCurveTime : DecelerationAccumulatedTime + SubstepDeltaTime;
 		DecelerationAccumulatedTime = bNoInput ? AccumulativeAxisDecel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(MaxDecelerationCurveTime, 0), FMath::Abs(SpeedRatio));
 
@@ -281,7 +296,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * GetDecelerationRatio();
 		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
-		const bool bIsGoingOverLegalSpeed = (FMath::Abs(CurrentHorizontalSpeed) > ((GetMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
+		const bool bIsGoingOverLegalSpeed = (FMath::Abs(CurrentHorizontalSpeed) > ((GetAbsMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
 		ThrottleForce = bIsGoingOverLegalSpeed ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
 
 		// Adjusting Throttle based on engine decceleration values
@@ -292,7 +307,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
-	RootBodyInstance->AngularDamping = bCompletelyInTheAir ? AngularDampingAir : AngularDampingGround;
+	RootBodyInstance->AngularDamping = bCompletelyInTheAir ? 0.f : AngularDampingGround;
 	RootBodyInstance->UpdateDampingProperties();
 
 
@@ -312,9 +327,9 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	
 
 	// Vehicles can't go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
-	if (FMath::Abs(CurrentHorizontalSpeed) > FMath::Min(GetMaxSpeedAxisIndependent(), GetTerminalSpeed()))
+	if (FMath::Abs(CurrentHorizontalSpeed) > FMath::Min(GetAbsMaxSpeedAxisIndependent(), GetTerminalSpeed()))
 	{
-		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetMaxSpeedAxisIndependent());
+		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetAbsMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetAbsMaxSpeedAxisIndependent());
 		const float TerminalVelocityPreemptionFinalForce = FMath::Abs(CurrentHorizontalSpeed) > GetTerminalSpeed() ? BIG_NUMBER : FMath::Lerp(0.f, GetTerminalSpeed() + TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET, BlendAlpha);
 		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
@@ -339,7 +354,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCachedSuspensionInfo& InCachedInfo)
 {
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
-	const FVector TraceEnd = TraceStart - (RGUpVector * (StickyWheelsGroundDistanceThreshold));
+	const FVector TraceEnd = TraceStart - (RGUpVector * (GroundDetectionDistanceThreshold));
 	FSuspensionHitInfo sHitInfo;
 
 	FHitResult OutHit;
@@ -376,6 +391,7 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 			sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
 		}		
 		sHitInfo.bTraceHit = true;
+		sHitInfo.bOverRollForceThreshold = OutHit.Distance > AntiRollForcedDistanceThreshold;
 
 		InCachedInfo.ImpactNormal = OutHit.ImpactNormal;
 		InCachedInfo.ImpactPoint = OutHit.ImpactPoint;
@@ -401,6 +417,7 @@ void AAVBaseVehicle::ApplySuspensionForces()
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
 	bCompletelyInTheGround = WheelsTouchingTheGround == NUMBER_OF_WHEELS;
+	bOverRollForceThreshold = (BackRightSuspension.bOverRollForceThreshold + FrontRightSuspension.bOverRollForceThreshold + FrontLeftSuspension.bOverRollForceThreshold + BackLeftSuspension.bOverRollForceThreshold) > 2;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
 	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
@@ -469,12 +486,13 @@ void AAVBaseVehicle::SetBrakeInput(float InputAxis)
 void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 {
 	// Throttle
-	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting) && bIsMovingOnGround)
+	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting))
 	{
+		AccelerationAccumulatedTime += DeltaTime;
 		/** We don't decelerate when we go over max speed, since we want vehicles to gain velocity downhill
 		* The terminal will be the maximum individual top speed that any vehicle can reach in any situation
 		**/
-		if (CurrentHorizontalSpeed <= GetComputedSpeed())
+		if (CurrentHorizontalSpeed <= GetComputedSpeed() && bIsMovingOnGround)
 		{
 			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
 			ThrottleForce =  FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
@@ -530,27 +548,27 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	}
 
 	// Braking
-	if (CurrentBrakeAxis <= -0.1 && bIsMovingOnGround && !bIsBoosting)
+	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting)
 	{
-		if (CurrentHorizontalSpeed <= 0.0)
-		{
-			if (FMath::Abs(CurrentHorizontalSpeed) <= GetComputedBackwardsSpeed())
+		//if (CurrentHorizontalSpeed <= 0.0)
+		//{
+			AccelerationAccumulatedTime -= DeltaTime;
+			if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
 			{
-				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BackwardsAcceleration;
+				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
 			}
-		}
+		/*}
 		else
 		{
 			ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
-		}
-
+		}*/
 	}
 }
 
 
-float AAVBaseVehicle::GetMaxSpeedAxisIndependent() const
+float AAVBaseVehicle::GetAbsMaxSpeedAxisIndependent() const
 {
-	return CurrentHorizontalSpeed >= 0 ? getMaxSpeed() : getMaxBackwardsSpeed();
+	return FMath::Abs(CurrentHorizontalSpeed >= 0 ? getMaxSpeed() : getMaxBackwardsSpeed());
 }
 
 
@@ -574,18 +592,6 @@ float AAVBaseVehicle::GetDecelerationRatio() const
 float AAVBaseVehicle::getMaxSpeed() const
 {
 	return MaxSpeed;
-}
-
-
-float AAVBaseVehicle::GetComputedBackwardsSpeed() const
-{
-	return MaxBackwardsSpeed * CurrentGroundScalarResistance;
-}
-
-
-float AAVBaseVehicle::GetComputedSpeedAxisIndependent() const
-{
-	return CurrentHorizontalSpeed >= 0 ? GetComputedSpeed() : GetComputedBackwardsSpeed();
 }
 
 
@@ -641,7 +647,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
 		
 		// Anti roll force (the car should be straight!)
-		const FVector AntiRollForce = FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct);
+		const FVector AntiRollForce = bOverRollForceThreshold ? FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct) : FVector::ZeroVector;
 		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}
@@ -698,6 +704,12 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 			FrontRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			FrontLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			BackLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+		}
+
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, GroundDetectionDistanceThreshold)
+			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, AntiRollForcedDistanceThreshold))
+		{
+			AntiRollForcedDistanceThreshold = FMath::Min(GroundDetectionDistanceThreshold, AntiRollForcedDistanceThreshold);
 		}
 	}
 }

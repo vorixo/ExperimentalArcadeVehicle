@@ -18,8 +18,6 @@
 // Misc vars
 #define DEFAULT_GROUND_FRICTION 1
 #define DEFAULT_GROUND_RESISTANCE 1
-#define REPULSIVE_FORCE_MAX_WALKABLE_ANGLE 1000
-#define ANTI_ROLL_FORCE 20000
 #define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
 #define ORIENT_ROTATION_VELOCITY_MAX_RATE 3.f
 
@@ -40,10 +38,13 @@ struct ARCADEVEHICLE_API FSuspensionHitInfo
 public:
 
 	UPROPERTY()
-	bool bWheelOnGround;
+	uint8 bWheelOnGround : 1;
 
 	UPROPERTY()
-	bool bTraceHit;
+	uint8 bTraceHit : 1;
+
+	UPROPERTY()
+	uint8 bOverRollForceThreshold : 1;
 
 	UPROPERTY()
 	float GroundFriction;
@@ -51,9 +52,10 @@ public:
 	UPROPERTY()
 	float GroundResistance;
 
-	FSuspensionHitInfo() : 
+	FSuspensionHitInfo() :
 		bWheelOnGround(false),
 		bTraceHit(false),
+		bOverRollForceThreshold(true),
 		GroundFriction(DEFAULT_GROUND_FRICTION),
 		GroundResistance(DEFAULT_GROUND_RESISTANCE)
 	{
@@ -183,9 +185,9 @@ public:
 	UFUNCTION()
 	virtual void ApplyInputStack(float DeltaTime);
 
-	/** Gets you whatever max speed is being used*/
+	/** Gets you whatever max speed is being used in absolute value */
 	UFUNCTION(BlueprintPure)
-	float GetMaxSpeedAxisIndependent() const;
+	float GetAbsMaxSpeedAxisIndependent() const;
 
 	/** Computes the current forward speed based on the acceleration curve */
 	UFUNCTION(BlueprintPure)
@@ -196,13 +198,6 @@ public:
 
 	UFUNCTION(BlueprintPure)
 	float getMaxSpeed() const;
-
-	UFUNCTION(BlueprintPure)
-	float GetComputedBackwardsSpeed() const;
-
-	/** Gets you whatever max speed is being used*/
-	UFUNCTION(BlueprintPure)
-	float GetComputedSpeedAxisIndependent() const;
 
 	UFUNCTION(BlueprintPure)
 	float getMaxBackwardsSpeed() const;
@@ -275,6 +270,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	uint8 bIsCloseToGround : 1;
 
+	UPROPERTY(BlueprintReadOnly)
+	uint8 bOverRollForceThreshold : 1;
+
 	UPROPERTY(BlueprintReadWrite)
 	float CurrentThrottleAxis;
 
@@ -319,6 +317,9 @@ protected:
 	float AccelerationAccumulatedTime;
 
 	UPROPERTY(BlueprintReadOnly)
+	float MinAccelerationCurveTime;
+
+	UPROPERTY(BlueprintReadOnly)
 	float MaxAccelerationCurveTime;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -327,8 +328,11 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float MaxDecelerationCurveTime;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadWrite)
 	float MaxSpeed;
+
+	UPROPERTY(BlueprintReadWrite)
+	float MaxBackwardsSpeed;
 
 	UPROPERTY(BlueprintReadOnly)
 	float TimeFalling;
@@ -394,16 +398,16 @@ public:
 	float GroundFriction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float StickyWheelsGroundDistanceThreshold;
+	float GroundDetectionDistanceThreshold;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float AntiRollForcedDistanceThreshold;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LinearDampingAir;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float AngularDampingGround;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (ClampMin = "1.0", ClampMax = "100.0", UIMin = "1.0", UIMax = "100.0"))
-	float AngularDampingAir;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float MaxSpeedBoosting;
@@ -413,9 +417,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* EngineDecelerationCurve; 
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float MaxBackwardsSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float TorqueSpeed;
@@ -434,9 +435,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float BrakinDeceleration;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float BackwardsAcceleration;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* SteeringActionCurve;

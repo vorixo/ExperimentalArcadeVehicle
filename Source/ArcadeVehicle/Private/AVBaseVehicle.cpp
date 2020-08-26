@@ -486,7 +486,7 @@ void AAVBaseVehicle::SetBrakeInput(float InputAxis)
 void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 {
 	// Throttle
-	if ((CurrentThrottleAxis >= 0.1f || bIsBoosting))
+	if (CurrentThrottleAxis >= 0.1f || bIsBoosting)
 	{
 		AccelerationAccumulatedTime += DeltaTime;
 		/** We don't decelerate when we go over max speed, since we want vehicles to gain velocity downhill

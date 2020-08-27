@@ -383,7 +383,12 @@ public:
 
 	UPROPERTY(BlueprintReadOnly)
 	FVector BackLeft;
+
 	// These will spawn the traces
+
+	/* Trace Half Size */
+	UPROPERTY(EditDefaultsOnly)
+	FVector2D TraceHalfSize;
 
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionFront)
 	FSuspensionData SuspensionFront;

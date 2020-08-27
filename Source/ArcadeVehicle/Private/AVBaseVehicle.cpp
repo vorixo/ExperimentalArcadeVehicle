@@ -64,6 +64,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	AirStrafeSpeed = 1000.f;
 	bOrientRotationToMovementInAir = false;
 	OrientRotationToMovementInAirInfluenceRate = 1.f;
+	SteeringDecelerationSideVelocityFactorScale = 40.f;
+	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4;
 
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -242,6 +244,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
 	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
 	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
+	LocalVelocity = RGWorldTransform.GetRotation().UnrotateVector(CurrentHorizontalVelocity);
 
 	// Input processing
 	ApplyInputStack(SubstepDeltaTime);
@@ -269,17 +272,15 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Throttle force adjustments based on Brake and forward axis values
 	//if (!bIsBoosting)
 	//{
-		/* // Turn deceleration stub
-		const FVector DirectionalVelocity = RGWorldTransform.GetRotation().UnrotateVector(CurrentHorizontalVelocity);
-		const FVector side_velocity = FMath::Abs(DirectionalVelocity.Y) * RGForwardVector;
-		const FVector non_forward_velocity = CurrentHorizontalVelocity.GetSafeNormal2D() * getMaxSpeed() - (side_velocity * 40);
-		const bool bTurnDeceleration = CurrentHorizontalSpeed > non_forward_velocity.Size() && !bIsBoosting;
+		const FVector side_velocity = FMath::Abs(LocalVelocity.Y) * RGForwardVector;
+		const FVector non_forward_velocity = CurrentHorizontalVelocity.GetSafeNormal2D() * getMaxSpeed() - (side_velocity * SteeringDecelerationSideVelocityFactorScale);
+		const bool bTurnDeceleration = CurrentHorizontalSpeed > non_forward_velocity.Size() && !bIsBoosting && !FMath::IsNearlyZero(CurrentSteeringAxis);
 
 		if (bTurnDeceleration)
 		{
-			ThrottleForce = (non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * 0.3);
+			ThrottleForce = (non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * SteeringDecelerationSideVelocityInterpolationSpeed);
 		}
-		*/
+		
 	
 		const float SpeedRatio = CurrentHorizontalSpeed / GetAbsMaxSpeedAxisIndependent();
 		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
@@ -287,10 +288,12 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		
 		// Clamping curve thresholds
 		const float AccumulativeAxisAccel = FMath::Clamp(AccelerationAccumulatedTime, MinAccelerationCurveTime, MaxAccelerationCurveTime);
-		AccelerationAccumulatedTime = (FMath::IsNearlyZero(AxisAdjustment)) ? FMath::GetMappedRangeValueClamped(FVector2D(-1, 1), FVector2D(MinAccelerationCurveTime, MaxAccelerationCurveTime), SpeedRatio) : AccumulativeAxisAccel;
+		AccelerationAccumulatedTime = (FMath::IsNearlyZero(AxisAdjustment) || bTurnDeceleration) ? FMath::GetMappedRangeValueClamped(FVector2D(-1, 1), FVector2D(MinAccelerationCurveTime, MaxAccelerationCurveTime), SpeedRatio) : AccumulativeAxisAccel;
 		const float AccumulativeAxisDecel = DecelerationAccumulatedTime > MaxDecelerationCurveTime ? MaxDecelerationCurveTime : DecelerationAccumulatedTime + SubstepDeltaTime;
 		DecelerationAccumulatedTime = bNoInput ? AccumulativeAxisDecel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(MaxDecelerationCurveTime, 0), FMath::Abs(SpeedRatio));
-
+		
+		PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
+		PRINT_TICK(FString::SanitizeFloat(DecelerationAccumulatedTime));
 
 		// Engine deceleration only if no input is applied whatsoever
 		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * GetDecelerationRatio();
@@ -366,8 +369,6 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 
 		if (InCachedInfo.SuspensionRatio > 0.f)
 		{
-
-			// fixmevori: long bounces for long falls. (Get rid of this pls)
 			const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
 			const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
 			const FVector FinalForce = (AvgedNormals * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;

@@ -240,6 +240,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly)
 	FVector CurrentHorizontalVelocity;
+
+	UPROPERTY(BlueprintReadOnly)
+	FVector LocalVelocity;
 	
 	UPROPERTY(BlueprintReadOnly)
 	float CurrentHorizontalSpeed;
@@ -438,6 +441,15 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* SteeringActionCurve;
+
+	/* This property scales the side velocity to substract to the forward velocity when the kart steers. 
+	Set to 0 for no deceleration at all, Set to 1 to decelerate only relative to the side velocity of the kart.*/
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float SteeringDecelerationSideVelocityFactorScale;
+
+	/* It determines how fast the kart will decelerate to substract completely the scaled side velocity. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float SteeringDecelerationSideVelocityInterpolationSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* AirControlCurve;

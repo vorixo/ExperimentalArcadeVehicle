@@ -73,24 +73,30 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SuspensionLength;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SuspensionStiffness;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SuspensionDampForce;
+
+	/* Trace Half Size */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	FVector2D TraceHalfSize;
 
 	FSuspensionData() :
 		SuspensionLength(60.f),
 		SuspensionStiffness(4.f),
-		SuspensionDampForce(1250.f)
+		SuspensionDampForce(1250.f),
+		TraceHalfSize(30.f, 30.f)
 	{
 
 	}
 
-	FSuspensionData(float inSuspensionLength, float inSuspensionStiffness, float inSuspensionDampForce) :
+	FSuspensionData(float inSuspensionLength, float inSuspensionStiffness, float inSuspensionDampForce, FVector2D inTraceHalfSize) :
 		SuspensionLength(inSuspensionLength),
 		SuspensionStiffness(inSuspensionStiffness),
-		SuspensionDampForce(inSuspensionDampForce)
+		SuspensionDampForce(inSuspensionDampForce),
+		TraceHalfSize(inTraceHalfSize)
 	{
 
 	}
@@ -105,9 +111,6 @@ struct ARCADEVEHICLE_API FCachedSuspensionInfo
 public:
 
 	UPROPERTY()
-	FVector ImpactPoint;
-
-	UPROPERTY()
 	FVector ImpactNormal;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -117,7 +120,6 @@ public:
 	FSuspensionData SuspensionData;
 
 	FCachedSuspensionInfo() :
-		ImpactPoint(FVector::ZeroVector),
 		ImpactNormal(FVector::ZeroVector),
 		SuspensionRatio(0.f),
 		SuspensionData(FSuspensionData())
@@ -168,7 +170,7 @@ public:
 	virtual void ApplySuspensionForces();
 
 	UFUNCTION(BlueprintNativeEvent, meta = (DisplayName = "TraceFunc"))
-	bool TraceFunc(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit);
+	bool TraceFunc(FVector Start, FVector End, FVector2D HalfSize, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit);
 
 	UFUNCTION()
 	FVector GetOffsetedCenterOfVehicle() const;
@@ -385,10 +387,6 @@ public:
 	FVector BackLeft;
 
 	// These will spawn the traces
-
-	/* Trace Half Size */
-	UPROPERTY(EditDefaultsOnly)
-	FVector2D TraceHalfSize;
 
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionFront)
 	FSuspensionData SuspensionFront;

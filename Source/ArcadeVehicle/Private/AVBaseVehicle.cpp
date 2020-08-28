@@ -86,7 +86,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 	FrontRight = FVector(75.f, 50.f, -25.f);
 	FrontLeft = FVector(75.f, -50.f, -25.f);
 	BackLeft = FVector(-75.f, -50.f, -25.f);
-	TraceHalfSize = FVector2D(30.f, 30.f);
 
 #if WITH_EDITOR
 	bHideHelpHandlersInPIE = true;
@@ -368,7 +367,7 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	FHitResult OutHit;
 	InCachedInfo.SuspensionRatio = 0.f;
 	
-	if (TraceFunc(TraceStart, TraceEnd, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
+	if (TraceFunc(TraceStart, TraceEnd, InCachedInfo.SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
 		InCachedInfo.SuspensionRatio = FMath::Max(0.f, 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength));
 
@@ -380,7 +379,7 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 			{
 				UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(InCachedInfo.SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
 				DrawDebugSweptBox(GetWorld(), TraceStart, TraceStart - (RGUpVector * (InCachedInfo.SuspensionData.SuspensionLength)), RGWorldTransform.GetRotation(), 
-					FVector(TraceHalfSize.X, TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, InCachedInfo.SuspensionRatio > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
+					FVector(InCachedInfo.SuspensionData.TraceHalfSize.X, InCachedInfo.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, InCachedInfo.SuspensionRatio > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
 			}
 		}
 		#endif
@@ -404,7 +403,6 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 		sHitInfo.bOverRollForceThreshold = OutHit.Distance > AntiRollForcedDistanceThreshold;
 
 		InCachedInfo.ImpactNormal = OutHit.ImpactNormal;
-		InCachedInfo.ImpactPoint = OutHit.ImpactPoint;
 		return sHitInfo;
 	}
 
@@ -451,7 +449,7 @@ void AAVBaseVehicle::Landed(const FVector& HitNormal)
 }
 
 
-bool AAVBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit)
+bool AAVBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, FVector2D HalfSize, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit)
  {
 	FHitResult Hit(ForceInit);
 	static const FName HoverLineTraceName(TEXT("HoverTrace"));
@@ -460,9 +458,9 @@ bool AAVBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, EDrawD
 	TraceParams.bTraceComplex = false;
 	TraceParams.bReturnPhysicalMaterial = true;
 	TraceParams.AddIgnoredActor(this);
-	bool const bHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, RGWorldTransform.GetRotation(), ECC_Visibility, FCollisionShape::MakeBox(FVector(TraceHalfSize.X, TraceHalfSize.Y, 0.f)), TraceParams);
+	bool const bHit = GetWorld()->SweepSingleByChannel(OutHit, Start, End, RGWorldTransform.GetRotation(), ECC_Visibility, FCollisionShape::MakeBox(FVector(HalfSize.X, HalfSize.Y, 0.f)), TraceParams);
 #if ENABLE_DRAW_DEBUG
-	DrawDebugSweptBox(GetWorld(), Start, End, RGWorldTransform.GetRotation(), FVector(TraceHalfSize.X, TraceHalfSize.Y, 0.f), DrawDebugType, bHit ? FColor::Green : FColor::Red, false, 0.f);
+	DrawDebugSweptBox(GetWorld(), Start, End, RGWorldTransform.GetRotation(), FVector(HalfSize.X, HalfSize.Y, 0.f), DrawDebugType, bHit ? FColor::Green : FColor::Red, false, 0.f);
 #endif
 	return bHit;
 }
@@ -701,13 +699,14 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 		
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.SuspensionLength)
 			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.SuspensionLength)
-			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, TraceHalfSize))
+			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.TraceHalfSize)
+			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.TraceHalfSize))
 		{
 			// Since it's a half size we need to enforce full size when scaling the 1M box
-			BackRightHandle->SetRelativeScale3D( FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
-			FrontRightHandle->SetRelativeScale3D( FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-			FrontLeftHandle->SetRelativeScale3D( FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-			BackLeftHandle->SetRelativeScale3D( FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
+			BackRightHandle->SetRelativeScale3D( FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
+			FrontRightHandle->SetRelativeScale3D( FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
+			FrontLeftHandle->SetRelativeScale3D( FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
+			BackLeftHandle->SetRelativeScale3D( FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
 		}
 		
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, bHideHelpHandlersInPIE))
@@ -743,10 +742,10 @@ void AAVBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
 void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 {
 	// We won't allow the user to scale the handlers
-	BackRightHandle->SetRelativeScale3D(FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
-	FrontRightHandle->SetRelativeScale3D(FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-	FrontLeftHandle->SetRelativeScale3D(FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-	BackLeftHandle->SetRelativeScale3D(FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
+	BackRightHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
+	FrontRightHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
+	FrontLeftHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
+	BackLeftHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
 
 	// We don't allow the user to rotate the handlers
 	BackRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
@@ -758,10 +757,10 @@ void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 
 void AAVBaseVehicle::UpdateHandlersTransformCDO()
 {
-	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
-	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
-	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
-	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(TraceHalfSize.X * 2, TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
+	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
+	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
+	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
+	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
 }
 #endif // WITH_EDITOR
 

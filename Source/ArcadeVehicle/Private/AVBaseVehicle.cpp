@@ -250,6 +250,9 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
 	LocalVelocity = RGWorldTransform.GetRotation().UnrotateVector(CurrentHorizontalVelocity);
 
+	// Moving on top of moving surfaces
+	ComputeBasedMovement();
+
 	// Input processing
 	ApplyInputStack(SubstepDeltaTime);
 
@@ -446,6 +449,67 @@ void AAVBaseVehicle::Landed(const FVector& HitNormal)
 {
 	TimeFalling = 0.f;
 	OnLanded(AvgedNormals);
+}
+
+
+void AAVBaseVehicle::ComputeBasedMovement()
+{
+	if (BasedMovementSetup == EBasedPlatformSetup::IgnoreBasedMovement)
+	{
+		return;
+	}
+
+	// Monolithic function approach
+	FHitResult BasedHit(ForceInit);
+	static const FName BasedLineTraceName(TEXT("BasedTrace"));
+	FCollisionQueryParams TraceParams;
+	TraceParams.TraceTag = BasedLineTraceName;
+	TraceParams.bTraceComplex = false;
+	TraceParams.bReturnPhysicalMaterial = false;
+	TraceParams.AddIgnoredActor(this);
+	bool const bHit = GetWorld()->LineTraceSingleByChannel(BasedHit, RGLocation, RGLocation + (-RGUpVector * 500.f), ECC_Visibility, TraceParams);
+	
+	// New base acquired
+	if (bHit && BasedPlatformInfo.MovementBase != BasedHit.GetComponent())
+	{
+		BasedPlatformInfo.MovementBase = BasedHit.GetComponent();
+		BasedPlatformInfo.Location = BasedPlatformInfo.MovementBase->GetComponentLocation();
+		BasedPlatformInfo.Rotation = BasedPlatformInfo.MovementBase->GetComponentQuat();
+	}
+	else
+	{
+		const FVector NewBasedLocation = BasedPlatformInfo.MovementBase->GetComponentLocation();
+		const FQuat NewBasedQuat = BasedPlatformInfo.MovementBase->GetComponentQuat();
+		const bool bApplyBodyTransform = bIsMovingOnGround && (!BasedPlatformInfo.Rotation.Equals(NewBasedQuat, 1e-8f) || NewBasedLocation != BasedPlatformInfo.Location);
+
+		if (bApplyBodyTransform)
+		{	
+			FTransform NewTransform = RGWorldTransform;	
+
+			// Moving platforms
+			if (BasedMovementSetup != EBasedPlatformSetup::IgnoreBasedRotation)
+			{
+				// Finding the change in rotation
+				const FQuat DeltaQuat = NewBasedQuat * BasedPlatformInfo.Rotation.Inverse();
+				const FQuat TargetQuat = DeltaQuat * RGWorldTransform.GetRotation();
+				NewTransform.SetRotation(TargetQuat);
+			}
+			
+			// A rotation might have location offset (long objects rotating)
+			const FQuatRotationTranslationMatrix OldLocalToWorld(BasedPlatformInfo.Rotation, BasedPlatformInfo.Location);
+			const FQuatRotationTranslationMatrix NewLocalToWorld(NewBasedQuat, NewBasedLocation);
+			FVector const LocalBasePos = OldLocalToWorld.InverseTransformPosition(RGLocation);
+			FVector const NewWorldPos = NewLocalToWorld.TransformPosition(LocalBasePos);
+			FVector const DeltaPosition = NewWorldPos - RGLocation;
+			NewTransform.AddToTranslation(DeltaPosition);
+
+			// fixmevori: experiment with different types of teleports. Listen to the community to see what they think.
+			RootBodyInstance->SetBodyTransform(NewTransform, ETeleportType::None);
+		}
+		
+		BasedPlatformInfo.Location = NewBasedLocation;
+		BasedPlatformInfo.Rotation = NewBasedQuat;
+	}
 }
 
 

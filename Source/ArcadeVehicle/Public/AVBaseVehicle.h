@@ -129,6 +129,34 @@ public:
 };
 
 
+USTRUCT(BlueprintType)
+struct ARCADEVEHICLE_API FBasedPlatformInfo
+{
+	GENERATED_USTRUCT_BODY()
+	
+	/** Component we are based on */
+	UPROPERTY(BlueprintReadOnly)
+	UPrimitiveComponent* MovementBase;
+
+	/** Location relative to MovementBase. Only valid if HasRelativeLocation() is true. */
+	UPROPERTY(BlueprintReadOnly)
+	FVector_NetQuantize100 Location;
+
+	/** Rotation: relative to MovementBase if HasRelativeRotation() is true, absolute otherwise. */
+	UPROPERTY(BlueprintReadOnly)
+	FQuat Rotation;
+
+};
+
+
+UENUM(BlueprintType)
+enum class EBasedPlatformSetup : uint8 {
+	IgnoreBasedMovement		= 0		UMETA(DisplayName = "Ignore Based Movement"),
+	IgnoreBasedRotation		= 1		UMETA(DisplayName = "Ignore Based Rotation"),
+	ApplyBasedMovement		= 2		UMETA(DisplayName = "Apply Based Movement"),
+};
+
+
 UCLASS()
 class ARCADEVEHICLE_API AAVBaseVehicle : public APawn
 {
@@ -231,6 +259,10 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void OnLanded(const FVector &HitNormal);
+
+	/** Computes the delta movement to apply on moving platforms **/
+	UFUNCTION()
+	void ComputeBasedMovement();
 
 protected:
 	// Reference to MMTPawn root component
@@ -342,6 +374,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float TimeFalling;
 	
+	UPROPERTY(BlueprintReadOnly)
+	FBasedPlatformInfo BasedPlatformInfo;
+
 	/** 1: Max influence 0: Min Influence **/
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float OrientRotationToMovementInAirInfluenceRate;
@@ -386,13 +421,15 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	FVector BackLeft;
 
-	// These will spawn the traces
-
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionFront)
 	FSuspensionData SuspensionFront;
 
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionRear)
 	FSuspensionData SuspensionRear;
+
+	/* Decides on how the vehicle will behave on top of moving or rotating platforms. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	EBasedPlatformSetup BasedMovementSetup;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityAir;

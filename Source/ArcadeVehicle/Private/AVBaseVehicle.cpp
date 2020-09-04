@@ -476,7 +476,7 @@ void AAVBaseVehicle::ComputeBasedMovement()
 		BasedPlatformInfo.Location = BasedPlatformInfo.MovementBase->GetComponentLocation();
 		BasedPlatformInfo.Rotation = BasedPlatformInfo.MovementBase->GetComponentQuat();
 	}
-	else
+	else if (BasedPlatformInfo.MovementBase)
 	{
 		const FVector NewBasedLocation = BasedPlatformInfo.MovementBase->GetComponentLocation();
 		const FQuat NewBasedQuat = BasedPlatformInfo.MovementBase->GetComponentQuat();

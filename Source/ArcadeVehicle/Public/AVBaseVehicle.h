@@ -378,8 +378,12 @@ protected:
 	FBasedPlatformInfo BasedPlatformInfo;
 
 	/** 1: Max influence 0: Min Influence **/
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir"))
 	float OrientRotationToMovementInAirInfluenceRate;
+
+	/** 1: Max influence 0: Min Influence **/
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float AccelerationInfluenceRateWhileBraking;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
@@ -467,7 +471,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float AirYawSpeed;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "!bOrientRotationToMovementInAir"))
 	float AirStrafeSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)

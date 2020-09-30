@@ -47,7 +47,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	VehicleBoostAcceleration = 3000.f;
 	TorqueSpeed = 12.f;
 	TimeFalling = 0.f;
-	BrakinDeceleration = 2000.f;
+	BrakinDeceleration = 3000.f;
 	GroundDetectionDistanceThreshold = 800.f;
 	AntiRollForcedDistanceThreshold = 100.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
@@ -64,6 +64,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	AirStrafeSpeed = 1000.f;
 	bOrientRotationToMovementInAir = false;
 	OrientRotationToMovementInAirInfluenceRate = 1.f;
+	AccelerationInfluenceRateWhileBraking = 0.3f;
 	SteeringDecelerationSideVelocityFactorScale = 40.f;
 	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4;
 
@@ -290,20 +291,20 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		
 	
 		const float SpeedRatio = CurrentHorizontalSpeed / GetAbsMaxSpeedAxisIndependent();
-		const float AxisAdjustment = CurrentBrakeAxis + CurrentThrottleAxis;
-		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1);
-		
+		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1 && !bIsBoosting);
+
+
 		// Clamping curve thresholds
 		const float AccumulativeAxisAccel = FMath::Clamp(AccelerationAccumulatedTime, MinAccelerationCurveTime, MaxAccelerationCurveTime);
-		AccelerationAccumulatedTime = (FMath::IsNearlyZero(AxisAdjustment) || bTurnDeceleration) ? FMath::GetMappedRangeValueClamped(FVector2D(-1, 1), FVector2D(MinAccelerationCurveTime, MaxAccelerationCurveTime), SpeedRatio) : AccumulativeAxisAccel;
+		AccelerationAccumulatedTime = (bNoInput || bTurnDeceleration || IsBraking()) ? FMath::GetMappedRangeValueClamped(FVector2D(-1, 1), FVector2D(MinAccelerationCurveTime, MaxAccelerationCurveTime), SpeedRatio) : AccumulativeAxisAccel;
 		const float AccumulativeAxisDecel = DecelerationAccumulatedTime > MaxDecelerationCurveTime ? MaxDecelerationCurveTime : DecelerationAccumulatedTime + SubstepDeltaTime;
-		DecelerationAccumulatedTime = bNoInput ? AccumulativeAxisDecel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(MaxDecelerationCurveTime, 0), FMath::Abs(SpeedRatio));
+		DecelerationAccumulatedTime = (bNoInput) ? AccumulativeAxisDecel : FMath::GetMappedRangeValueClamped(FVector2D(0, 1), FVector2D(MaxDecelerationCurveTime, 0), FMath::Abs(SpeedRatio));
 		
 		PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
 		PRINT_TICK(FString::SanitizeFloat(DecelerationAccumulatedTime));
 
 		// Engine deceleration only if no input is applied whatsoever
-		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * bNoInput * GetDecelerationRatio();
+		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * (bNoInput) * GetDecelerationRatio();
 		
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
 		const bool bIsGoingOverLegalSpeed = (FMath::Abs(CurrentHorizontalSpeed) > ((GetAbsMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
@@ -561,13 +562,10 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 	if (CurrentThrottleAxis >= 0.1f || bIsBoosting)
 	{
 		AccelerationAccumulatedTime += DeltaTime;
-		/** We don't decelerate when we go over max speed, since we want vehicles to gain velocity downhill
-		* The terminal will be the maximum individual top speed that any vehicle can reach in any situation
-		**/
 		if (CurrentHorizontalSpeed <= GetComputedSpeed() && bIsMovingOnGround)
 		{
 			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
-			ThrottleForce =  FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
 		}
 	}
 
@@ -594,46 +592,37 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
 				const FVector forward_velocity = (RGForwardVector * forward_signed_speed * DirectionFactor);
 				const FVector non_forward_velocity = CurrentHorizontalVelocity - forward_velocity;
-				//if (non_forward_velocity.SizeSquared2D() > 1000.f) {
-					ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
-				//}
-
-				
-
-				// fixmevori: Experimental code, might change to drag and lift force model if i get it working. :)
-				/*
-				float fMyAwsomeDot = 1.0f - (FVector::DotProduct(CurrentHorizontalVelocity.GetSafeNormal2D(), RGForwardVector.GetSafeNormal2D()) * 0.5f + 0.5f);
-				fMyAwsomeDot = FMath::Pow(fMyAwsomeDot, 1);
-				fMyAwsomeDot *= CurrentHorizontalVelocity.Size();
-				fMyAwsomeDot *= 5 * fMyAwsomeDot;
-				FVector vDragAndLiftForce = -fMyAwsomeDot * CurrentHorizontalVelocity + fMyAwsomeDot * RGForwardVector;
-				ThrottleForce = vDragAndLiftForce;
-				*/
+				ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
 			}
 			else
 			{
 				ThrottleForce = CurrentSteeringAxis * RGRightVector * AirStrafeSpeed * ControlRatio;
 			}
 		}
-		
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
 	}
 
-	// Braking
+	// Reverse
 	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting)
 	{
-		//if (CurrentHorizontalSpeed <= 0.0)
-		//{
-			AccelerationAccumulatedTime -= DeltaTime;
-			if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
-			{
-				ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
-			}
-		/*}
+		AccelerationAccumulatedTime -= DeltaTime;
+		if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
+		{
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
+		}
+	}
+
+	// Compute Braking
+	if (IsBraking() && bIsMovingOnGround && !bIsBoosting)
+	{
+		if (CurrentHorizontalSpeed <= 0.0)
+		{
+			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentThrottleAxis * BrakinDeceleration;
+		}
 		else
 		{
-			ThrottleForce += FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
-		}*/
+			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
+		}
 	}
 }
 
@@ -736,9 +725,8 @@ float AAVBaseVehicle::GetTerminalSpeed() const
 
 bool AAVBaseVehicle::IsBraking() const
 {
-	return ((CurrentBrakeAxis <= -0.1 && CurrentHorizontalSpeed > 0.f) || 
-		(CurrentThrottleAxis >= 0.1 && CurrentHorizontalSpeed <= 0.f) ||
-		(CurrentThrottleAxis + CurrentBrakeAxis) == 0);
+	return (CurrentBrakeAxis <= -0.1 && CurrentHorizontalSpeed > 0.f) ||
+		(CurrentThrottleAxis >= 0.1 && CurrentHorizontalSpeed <= 0.f);
 }
 
 

@@ -19,6 +19,7 @@
 #define DEFAULT_GROUND_FRICTION 1
 #define DEFAULT_GROUND_RESISTANCE 1
 #define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
+#define IDLE_VEHICLE_FORCE 500.f
 #define ORIENT_ROTATION_VELOCITY_MAX_RATE 3.f
 
 
@@ -157,6 +158,14 @@ enum class EBasedPlatformSetup : uint8 {
 };
 
 
+UENUM(BlueprintType)
+enum class ESimplifiedDirection : uint8 {
+	Idle	= 0		UMETA(DisplayName = "Idle"),
+	Forward = 1		UMETA(DisplayName = "Forward Movement"),
+	Reverse = 2		UMETA(DisplayName = "Backwards Movement"),
+};
+
+
 UCLASS()
 class ARCADEVEHICLE_API AAVBaseVehicle : public APawn
 {
@@ -238,6 +247,10 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void SetBoosting(bool inBoost);
 
+	/* Call this function whenever you want to initialise the vehicle (ie: after a recover from out of bounds... ect) */
+	UFUNCTION(BlueprintCallable)
+	void ResetVehicle();
+
 	UFUNCTION(BlueprintPure)
 	bool GetStickyWheels() const;
 
@@ -253,6 +266,9 @@ public:
 	/** Is any brakin force acting over the vehicle? */
 	UFUNCTION(BlueprintPure)
 	bool IsBraking() const;
+
+	UFUNCTION(BlueprintPure)
+	ESimplifiedDirection GetSimplifiedKartDirection() const;
 
 	/** This function gets called when bIsMovingOnGround becomes true **/
 	virtual void Landed(const FVector& HitNormal);
@@ -376,6 +392,12 @@ protected:
 	
 	UPROPERTY(BlueprintReadOnly)
 	FBasedPlatformInfo BasedPlatformInfo;
+
+	UPROPERTY(BlueprintReadOnly)
+	ESimplifiedDirection LastUsedGear;
+
+	UPROPERTY(BlueprintReadOnly)
+	float LastTimeGearSwapped;
 
 	/** 1: Max influence 0: Min Influence **/
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir"))
@@ -506,6 +528,14 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LegalSpeedOffset;
+
+	/* Slight delay to simulate swapping gears from forward to reverse. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float SwapGearDirectionDelay;
+
+	/* A kart is considered idling when the HorizontalSpeed is 0 +- StopThreshold */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float StopThreshold;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	FVector2D AccelerationCenterOfMassOffset;

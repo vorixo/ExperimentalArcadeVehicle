@@ -362,6 +362,14 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float CurrentGroundFriction;
 
+	/** Desired input direction **/
+	UPROPERTY(BlueprintReadOnly)
+	float InfluencialDirection;
+
+	/** Desired input direction **/
+	UPROPERTY(BlueprintReadOnly)
+	uint8 bIsGearReady : 1;
+
 	/** Resistance imposed by the current ground in which the user is navigating, will be translated to ground linear damping. */
 	UPROPERTY(BlueprintReadWrite)
 	float CurrentGroundScalarResistance;

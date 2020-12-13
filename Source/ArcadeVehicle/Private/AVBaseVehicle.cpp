@@ -66,6 +66,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4;
 	SwapGearDirectionDelay = 0.4f;
 	StopThreshold = 10.f;
+	InfluencialDirection = 0.f;
+	bIsGearReady = true;
 	ResetVehicle();
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -281,10 +283,9 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	/* Apply deceleration forces			                                */
 	/************************************************************************/
 	const ESimplifiedDirection CurrentSimplifiedDirection = GetSimplifiedKartDirection();
-	if (CurrentSimplifiedDirection == ESimplifiedDirection::Idle)
+	if (CurrentSimplifiedDirection == ESimplifiedDirection::Idle && bIsGearReady)
 	{
 		// Compute desired direction based on axis action
-		const float InfluencialDirection = CurrentBrakeAxis + CurrentThrottleAxis;
 		if ((LastUsedGear == ESimplifiedDirection::Forward && InfluencialDirection < -0.1f) || 
 			(LastUsedGear == ESimplifiedDirection::Reverse && InfluencialDirection > 0.1f))
 		{
@@ -292,7 +293,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		}
 	}
 
-	const bool bWantsToIdle = (CurrentSimplifiedDirection == ESimplifiedDirection::Idle && FMath::IsNearlyZero(CurrentThrottleAxis + CurrentBrakeAxis));
+	const bool bWantsToIdle = (CurrentSimplifiedDirection == ESimplifiedDirection::Idle && FMath::IsNearlyZero(InfluencialDirection));
 		
 	if (bWantsToIdle)
 	{
@@ -567,7 +568,7 @@ bool AAVBaseVehicle::TraceFunc_Implementation(FVector Start, FVector End, FVecto
 FVector AAVBaseVehicle::GetOffsetedCenterOfVehicle() const
 {
 	return (RGLocation - (RGUpVector * AccelerationCenterOfMassOffset.Y)) +
-		((RGForwardVector * (CurrentThrottleAxis + CurrentBrakeAxis)) * AccelerationCenterOfMassOffset.X);
+		((RGForwardVector * (InfluencialDirection)) * AccelerationCenterOfMassOffset.X);
 }
 
 
@@ -591,7 +592,7 @@ void AAVBaseVehicle::SetBrakeInput(float InputAxis)
 
 void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 {
-	const bool bIsGearReady = ((LastTimeGearSwapped + SwapGearDirectionDelay) <= GetWorld()->GetTimeSeconds());
+	bIsGearReady = (GetWorld()->GetTimeSeconds() - SwapGearDirectionDelay) > LastTimeGearSwapped;
 
 	// Throttle
 	if ((CurrentThrottleAxis >= 0.1f && bIsGearReady) || bIsBoosting)
@@ -659,6 +660,9 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
 		}
 	}
+
+	// Compute influencial direction based on axis input
+	InfluencialDirection = CurrentThrottleAxis + CurrentBrakeAxis;
 }
 
 

@@ -594,6 +594,18 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 {
 	bIsGearReady = (GetWorld()->GetTimeSeconds() - SwapGearDirectionDelay) > LastTimeGearSwapped;
 
+	ApplyThrottleInput(DeltaTime);
+	ApplySteeringInput(DeltaTime);
+	ApplyReverseInput(DeltaTime);
+	ApplyBrakeInput(DeltaTime);
+
+	// Compute influencial direction based on axis input
+	InfluencialDirection = CurrentThrottleAxis + CurrentBrakeAxis;
+}
+
+
+void AAVBaseVehicle::ApplyThrottleInput(float DeltaTime)
+{
 	// Throttle
 	if ((CurrentThrottleAxis >= 0.1f && bIsGearReady) || bIsBoosting)
 	{
@@ -604,7 +616,25 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
 		}
 	}
+}
 
+
+void AAVBaseVehicle::ApplyReverseInput(float DeltaTime)
+{
+	// Reverse
+	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting && bIsGearReady)
+	{
+		AccelerationAccumulatedTime -= DeltaTime;
+		if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
+		{
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
+		}
+	}
+}
+
+
+void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
+{
 	// Steering
 	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
 		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
@@ -612,17 +642,17 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 		// fixmevori: simplify
 		// Direction Calc
 		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
-		const float DirectionFactor = (DirectionSign == 0 || (CurrentHorizontalSpeed <= 0 && CurrentHorizontalSpeed > -100 && !bIsMovingOnGround) ) ? 1.f : DirectionSign;
+		const float DirectionFactor = (DirectionSign == 0 || (CurrentHorizontalSpeed <= 0 && CurrentHorizontalSpeed > -100 && !bIsMovingOnGround)) ? 1.f : DirectionSign;
 		// Steering acceleration
 		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
 		float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
-		
+
 		if (bCompletelyInTheAir)
 		{
 			// Air steering input stack - fixmevori: experimental curve
 			const float ControlRatio = AirControlCurve ? AirControlCurve->GetFloatValue(TimeFalling) : 1.f;
 			InputTorqueRatio = CurrentSteeringAxis * AirYawSpeed * ControlRatio;
-			
+
 			if (bOrientRotationToMovementInAir)
 			{
 				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
@@ -637,17 +667,11 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 		}
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
 	}
+}
 
-	// Reverse
-	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting && bIsGearReady)
-	{
-		AccelerationAccumulatedTime -= DeltaTime;
-		if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
-		{
-			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
-		}
-	}
 
+void AAVBaseVehicle::ApplyBrakeInput(float DeltaTime)
+{
 	// Compute Braking
 	if (IsBraking() && bIsMovingOnGround && !bIsBoosting)
 	{
@@ -660,9 +684,6 @@ void AAVBaseVehicle::ApplyInputStack(float DeltaTime)
 			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * BrakinDeceleration;
 		}
 	}
-
-	// Compute influencial direction based on axis input
-	InfluencialDirection = CurrentThrottleAxis + CurrentBrakeAxis;
 }
 
 

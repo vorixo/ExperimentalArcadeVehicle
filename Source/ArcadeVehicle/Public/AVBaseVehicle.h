@@ -221,8 +221,19 @@ public:
 	UFUNCTION()
 	void SetBrakeInput(float InputAxis);
 
+	void ApplyInputStack(float DeltaTime);
+
 	UFUNCTION()
-	virtual void ApplyInputStack(float DeltaTime);
+	virtual void ApplySteeringInput(float DeltaTime);
+
+	UFUNCTION()
+	virtual void ApplyThrottleInput(float DeltaTime);
+
+	UFUNCTION()
+	virtual void ApplyReverseInput(float DeltaTime);
+
+	UFUNCTION()
+	virtual void ApplyBrakeInput(float DeltaTime);
 
 	/** Gets you whatever max speed is being used in absolute value */
 	UFUNCTION(BlueprintPure)

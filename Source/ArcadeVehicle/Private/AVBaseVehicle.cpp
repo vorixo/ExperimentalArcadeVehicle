@@ -781,10 +781,10 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 
 		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
 		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
-		
+
 		// Anti roll force (the car should be straight!)
 		const FVector AntiRollForce = bOverRollForceThreshold ? FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct) : FVector::ZeroVector;
-		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * DeltaTime;
+		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * 0.016;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}
 

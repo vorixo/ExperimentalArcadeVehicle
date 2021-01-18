@@ -16,7 +16,9 @@ FAutoConsoleVariableRef CVARDebugPlayableArea(
 AAVBaseVehicle::AAVBaseVehicle()
 {
  	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bStartWithTickEnabled = false;
+	PrimaryActorTick.bAllowTickOnDedicatedServer = false;
 
 	// Custom Properties
 	SuspensionFront = FSuspensionData();
@@ -209,7 +211,7 @@ void AAVBaseVehicle::BeginPlay()
 	}
 
 	UWorld* World = GetWorld();
-	if (World)
+	if (World && IsLocallyControlled())
 	{
 		FPhysScene* PScene = World->GetPhysicsScene();
 		if (PScene)
@@ -337,8 +339,6 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : ThrottleForce;
 	}
 
-	// PRINT_TICK(FString::SanitizeFloat(AccelerationAccumulatedTime));
-	// PRINT_TICK(FString::SanitizeFloat(DecelerationAccumulatedTime));
 		
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
@@ -784,7 +784,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 
 		// Anti roll force (the car should be straight!)
 		const FVector AntiRollForce = bOverRollForceThreshold ? FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct) : FVector::ZeroVector;
-		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * 0.016;
+		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * 0.01;
 		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
 	}
 

@@ -26,8 +26,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	bIsMovingOnGround = false;
 	bIsCloseToGround = false;
 	bOverRollForceThreshold = false;
-	GravityAir = -980.0;
-	GravityGround = -980.0;
+	GravityAir = -980.f;
+	GravityGround = -980.f;
 	// Gameplay driven friction
 	ScalarFrictionVal = 1.f;
 	GroundFriction = 100.f;
@@ -252,7 +252,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
 	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
 	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
-	LocalVelocity = RGWorldTransform.GetRotation().UnrotateVector(CurrentHorizontalVelocity);
+	LocalVelocity = RGWorldTransform.InverseTransformVectorNoScale(CurrentHorizontalVelocity);
 
 	// Moving on top of moving surfaces
 	ComputeBasedMovement();
@@ -403,11 +403,10 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 	FSuspensionHitInfo sHitInfo;
 
 	FHitResult OutHit;
-	InCachedInfo.SuspensionRatio = 0.f;
 	
 	if (TraceFunc(TraceStart, TraceEnd, InCachedInfo.SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
-		InCachedInfo.SuspensionRatio = FMath::Max(0.f, 1 - (OutHit.Distance / InCachedInfo.SuspensionData.SuspensionLength));
+		InCachedInfo.DisplacementInput = FMath::Min(OutHit.Distance, InCachedInfo.SuspensionData.SuspensionLength);
 
 		#if ENABLE_DRAW_DEBUG
 		if (bDebugInfo)
@@ -415,18 +414,31 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 			UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
 			if (World) 
 			{
-				UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(InCachedInfo.SuspensionRatio).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
+				UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(InCachedInfo.DisplacementInput).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
 				DrawDebugSweptBox(GetWorld(), TraceStart, TraceStart - (RGUpVector * (InCachedInfo.SuspensionData.SuspensionLength)), RGWorldTransform.GetRotation(), 
-					FVector(InCachedInfo.SuspensionData.TraceHalfSize.X, InCachedInfo.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, InCachedInfo.SuspensionRatio > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
+					FVector(InCachedInfo.SuspensionData.TraceHalfSize.X, InCachedInfo.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, InCachedInfo.DisplacementInput > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
 			}
 		}
 		#endif
 
-		if (InCachedInfo.SuspensionRatio > 0.f)
+		if (OutHit.Distance <= InCachedInfo.SuspensionData.SuspensionLength)
 		{
-			const FVector VectorToProject = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart) * InCachedInfo.SuspensionData.SuspensionStiffness;
-			const FVector ForceDownwards = AvgedNormals.SizeSquared() > SMALL_NUMBER ? VectorToProject.ProjectOnTo(AvgedNormals) : FVector::ZeroVector;
-			const FVector FinalForce = (AvgedNormals * (InCachedInfo.SuspensionRatio * InCachedInfo.SuspensionData.SuspensionDampForce)) - ForceDownwards;
+			const FVector WorldWheelVelocity = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart);
+
+			const FVector SuspensionAxis = OutHit.ImpactNormal;
+			const float LocalWheelVelocity = FVector::DotProduct(WorldWheelVelocity, SuspensionAxis);
+
+			const float SpringDisplacement = InCachedInfo.SuspensionData.SuspensionLength - InCachedInfo.DisplacementInput;
+
+			const float Damping = (InCachedInfo.DisplacementInput < InCachedInfo.LastDisplacement) ? InCachedInfo.SuspensionData.BoundDamping : InCachedInfo.SuspensionData.ReboundDamping;
+			const float StiffnessForce = SpringDisplacement * InCachedInfo.SuspensionData.SpringRate;
+			const float DampingForce = LocalWheelVelocity * Damping;
+			const float SuspensionForce = StiffnessForce - DampingForce;
+			InCachedInfo.LastDisplacement = InCachedInfo.DisplacementInput;
+
+			// FIXMEVORI: We can also use here AvgedNormals for a suspension regulated result
+			const FVector FinalForce = (SuspensionAxis * SuspensionForce);
+			
 			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
 
 			// Trace hits and it is within the suspension length size, hence the wheel is on the ground

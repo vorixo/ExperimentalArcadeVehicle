@@ -75,10 +75,13 @@ public:
 	float SuspensionLength;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float SuspensionStiffness;
+	float BoundDamping;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float SuspensionDampForce;
+	float ReboundDamping;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float SpringRate;
 
 	/* Trace Half Size */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
@@ -86,17 +89,19 @@ public:
 
 	FSuspensionData() :
 		SuspensionLength(60.f),
-		SuspensionStiffness(4.f),
-		SuspensionDampForce(1250.f),
+		BoundDamping(10.f),
+		ReboundDamping(0.9f),
+		SpringRate(50.f),
 		TraceHalfSize(30.f, 30.f)
 	{
 
 	}
 
-	FSuspensionData(float inSuspensionLength, float inSuspensionStiffness, float inSuspensionDampForce, FVector2D inTraceHalfSize) :
+	FSuspensionData(float inSuspensionLength, float inBoundDamping, float inReboundDamping, float inSpringRate, FVector2D inTraceHalfSize) :
 		SuspensionLength(inSuspensionLength),
-		SuspensionStiffness(inSuspensionStiffness),
-		SuspensionDampForce(inSuspensionDampForce),
+		BoundDamping(inBoundDamping),
+		ReboundDamping(inReboundDamping),
+		SpringRate(inSpringRate),
 		TraceHalfSize(inTraceHalfSize)
 	{
 
@@ -115,15 +120,19 @@ public:
 	FVector ImpactNormal;
 
 	UPROPERTY(BlueprintReadOnly)
-	float SuspensionRatio;
+	FSuspensionData SuspensionData;
 
 	UPROPERTY(BlueprintReadOnly)
-	FSuspensionData SuspensionData;
+	float DisplacementInput;
+
+	UPROPERTY(BlueprintReadOnly)
+	float LastDisplacement;
 
 	FCachedSuspensionInfo() :
 		ImpactNormal(FVector::ZeroVector),
-		SuspensionRatio(0.f),
-		SuspensionData(FSuspensionData())
+		SuspensionData(FSuspensionData()),
+		DisplacementInput(0.f),
+		LastDisplacement(0.f)
 	{
 
 	}

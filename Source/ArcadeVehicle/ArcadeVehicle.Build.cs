@@ -38,6 +38,7 @@ public class ArcadeVehicle : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+				"ChaosVehiclesCore",
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

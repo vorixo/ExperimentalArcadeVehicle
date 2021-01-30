@@ -4,6 +4,7 @@
 #include "AVBaseVehicle.h"
 #include "CollisionQueryParams.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+#include "ChaosVehicles/ChaosVehiclesCore/Public/SuspensionUtility.h"
 
 static int32 bDebugInfo = 0;
 FAutoConsoleVariableRef CVARDebugPlayableArea(
@@ -155,71 +156,25 @@ void DrawDebugSweptBox(const UWorld* InWorld, FVector const& Start, FVector cons
 // Called when the game starts or when spawned
 void AAVBaseVehicle::BeginPlay()
 {
-
 	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
-	if (PawnRootComponent != NULL) 
+	
+	if (PawnRootComponent != NULL)
 	{
-		CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
-		CachedSuspensionInfo[FRONT_LEFT].SuspensionData = SuspensionFront;
-		CachedSuspensionInfo[FRONT_RIGHT].SuspensionData = SuspensionFront;
-		CachedSuspensionInfo[BACK_LEFT].SuspensionData = SuspensionRear;
-		CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
-
-		// Initializing acceleration curves
-		if (EngineAccelerationCurve)
-		{
-			MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
-			MinAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetFirstKey().Time;
-			MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
-			MaxBackwardsSpeed = EngineAccelerationCurve->FloatCurve.GetFirstKey().Value;
-		}
-		else 
-		{
-			MaxAccelerationCurveTime = 1.f;
-			MinAccelerationCurveTime = -1.f;
-			MaxSpeed = 2000.f;
-			MaxBackwardsSpeed = -2000.f;
-			UE_LOG(LogTemp, Warning, TEXT("EngineAccelerationCurve missing, assuming default values."));
-		}
-		
-		if (EngineDecelerationCurve)
-		{
-			MaxDecelerationCurveTime = EngineDecelerationCurve->FloatCurve.GetLastKey().Time;
-		}
-		else
-		{
-			MaxDecelerationCurveTime = 1.f;
-			UE_LOG(LogTemp, Warning, TEXT("EngineDecelerationCurve missing, assuming default values."));
-		}
-
-		if (!SteeringActionCurve)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SteeringActionCurve missing, assuming default values."));
-		}
-
-		if (!AirControlCurve)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("AirControlCurve missing, assuming default values."));
-		}
-
-
-	#if WITH_EDITOR
-		ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, FMath::Abs(MaxBackwardsSpeed)), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
-	#endif
-
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
-	}
 
-	UWorld* World = GetWorld();
-	if (World && IsLocallyControlled())
-	{
-		FPhysScene* PScene = World->GetPhysicsScene();
-		if (PScene)
+		UWorld* World = GetWorld();
+		if (World->IsGameWorld() && IsLocallyControlled())
 		{
-			// Register physics step delegate
-			OnPhysSceneStepHandle = PScene->OnPhysSceneStep.AddUObject(this, &AAVBaseVehicle::PhysSceneStep);
+			FPhysScene* PScene = World->GetPhysicsScene();
+			if (PScene)
+			{
+				// Register physics step delegate
+				OnPhysSceneStepHandle = PScene->OnPhysSceneStep.AddUObject(this, &AAVBaseVehicle::PhysSceneStep);
+				InitVehicle();
+			}
 		}
 	}
+
 	Super::BeginPlay();
 }
 
@@ -261,7 +216,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	ApplyInputStack(SubstepDeltaTime);
 
 
-	ApplySuspensionForces();
+	ApplySuspensionForces(SubstepDeltaTime);
 
 	/************************************************************************/
 	/* Apply gravity and sliding forces                                     */
@@ -271,8 +226,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (bIsMovingOnGround)
 	{
 		// Drag/Friction force
-		const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction * CurrentGroundFriction)) * RGRightVector : FVector::ZeroVector;
-		RootBodyInstance->AddForce(FrictionDragForce, false, false);
+		RootBodyInstance->AddForce(GetFrictionDragForce(), false, false);
 	}
 	
 	
@@ -396,7 +350,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 }
 
 
-FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCachedSuspensionInfo& InCachedInfo)
+FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCachedSuspensionInfo& InCachedInfo, float DeltaTime)
 {
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
 	const FVector TraceEnd = TraceStart - (RGUpVector * (GroundDetectionDistanceThreshold));
@@ -423,21 +377,12 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 
 		if (OutHit.Distance <= InCachedInfo.SuspensionData.SuspensionLength)
 		{
-			const FVector WorldWheelVelocity = RootBodyInstance->GetUnrealWorldVelocityAtPoint(TraceStart);
-
-			const FVector SuspensionAxis = OutHit.ImpactNormal;
-			const float LocalWheelVelocity = FVector::DotProduct(WorldWheelVelocity, SuspensionAxis);
-
-			const float SpringDisplacement = InCachedInfo.SuspensionData.SuspensionLength - InCachedInfo.DisplacementInput;
-
-			const float Damping = (InCachedInfo.DisplacementInput < InCachedInfo.LastDisplacement) ? InCachedInfo.SuspensionData.BoundDamping : InCachedInfo.SuspensionData.ReboundDamping;
-			const float StiffnessForce = SpringDisplacement * InCachedInfo.SuspensionData.SpringRate;
-			const float DampingForce = LocalWheelVelocity * Damping;
-			const float SuspensionForce = StiffnessForce - DampingForce;
+			const float ForceMagnitude = GetSuspensionForceMagnitude(InCachedInfo, DeltaTime);
+	
 			InCachedInfo.LastDisplacement = InCachedInfo.DisplacementInput;
 
 			// FIXMEVORI: We can also use here AvgedNormals for a suspension regulated result
-			const FVector FinalForce = (SuspensionAxis * SuspensionForce);
+			const FVector FinalForce = (OutHit.ImpactNormal * ForceMagnitude);
 			
 			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
 
@@ -460,13 +405,43 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 }
 
 
-void AAVBaseVehicle::ApplySuspensionForces()
+float AAVBaseVehicle::GetSuspensionForceMagnitude(const FCachedSuspensionInfo& InCachedInfo, float DeltaTime) const
+{
+	const float LocalWheelVelocity = (InCachedInfo.DisplacementInput - InCachedInfo.LastDisplacement)/DeltaTime;
+
+	const float SpringDisplacement = InCachedInfo.SuspensionData.SuspensionLength - InCachedInfo.DisplacementInput;
+
+	const float Damping = (InCachedInfo.DisplacementInput < InCachedInfo.LastDisplacement) ? InCachedInfo.BoundDamping : InCachedInfo.ReboundDamping;
+	const float StiffnessForce = SpringDisplacement * InCachedInfo.SuspensionData.SpringRate;
+	const float DampingForce = LocalWheelVelocity * Damping;
+	const float SuspensionForce = StiffnessForce - DampingForce;
+
+	if (bTrialSetup)
+	{
+		// FIXMEVORI: DEPRECATED
+		return SuspensionForce;
+	}
+
+	const float ForceMagnitude = InCachedInfo.SuspensionData.SuspensionLoadRatio * SuspensionForce + (1.f - InCachedInfo.SuspensionData.SuspensionLoadRatio) * InCachedInfo.RestingForce;
+
+	return ForceMagnitude;
+}
+
+
+FVector AAVBaseVehicle::GetFrictionDragForce() const
+{
+	const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction * CurrentGroundFriction)) * RGRightVector : FVector::ZeroVector;
+	return FrictionDragForce;
+}
+
+
+void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 {
 	
-	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, CachedSuspensionInfo[BACK_RIGHT]);
-	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, CachedSuspensionInfo[FRONT_RIGHT]);
-	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT]);
-	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT]);
+	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, CachedSuspensionInfo[BACK_RIGHT], DeltaTime);
+	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, CachedSuspensionInfo[FRONT_RIGHT], DeltaTime);
+	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT], DeltaTime);
+	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT], DeltaTime);
 	
 	// On landing impl. If in the previous step it was in the air and now is in the ground 
 	const bool bWasMovingOnGround = bIsMovingOnGround;
@@ -936,4 +911,94 @@ void AAVBaseVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 	PlayerInputComponent->BindAxis("MoveForward", this, &AAVBaseVehicle::SetThrottleInput);
 	PlayerInputComponent->BindAxis("MoveRight", this, &AAVBaseVehicle::SetSteeringInput);
 	PlayerInputComponent->BindAxis("Brake", this, &AAVBaseVehicle::SetBrakeInput);
+}
+
+
+void AAVBaseVehicle::InitVehicle()
+{
+	CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
+	CachedSuspensionInfo[FRONT_LEFT].SuspensionData = SuspensionFront;
+	CachedSuspensionInfo[FRONT_RIGHT].SuspensionData = SuspensionFront;
+	CachedSuspensionInfo[BACK_LEFT].SuspensionData = SuspensionRear;
+	CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
+	
+	SetupVehicleCurves();
+
+	// DEPRECATED
+	if (bTrialSetup)
+	{
+		CachedSuspensionInfo[FRONT_LEFT].BoundDamping = SuspensionFront.DEPRECATED_BoundDamping;
+		CachedSuspensionInfo[FRONT_LEFT].ReboundDamping = SuspensionFront.DEPRECATED_ReboundDamping;
+		CachedSuspensionInfo[FRONT_RIGHT].BoundDamping = SuspensionFront.DEPRECATED_BoundDamping;
+		CachedSuspensionInfo[FRONT_RIGHT].ReboundDamping = SuspensionFront.DEPRECATED_ReboundDamping;
+
+		CachedSuspensionInfo[BACK_LEFT].BoundDamping = SuspensionRear.DEPRECATED_BoundDamping;
+		CachedSuspensionInfo[BACK_LEFT].ReboundDamping = SuspensionRear.DEPRECATED_ReboundDamping;
+		CachedSuspensionInfo[BACK_RIGHT].BoundDamping = SuspensionRear.DEPRECATED_BoundDamping;
+		CachedSuspensionInfo[BACK_RIGHT].ReboundDamping = SuspensionRear.DEPRECATED_ReboundDamping;
+
+		return;
+	}
+	
+	TArray<FVector> LocalSpringPositions = { FrontLeft - FVector(0,0,20.f) , BackLeft - FVector(0,0,20.f), FrontRight - FVector(0,0,20.f), BackRight - FVector(0,0,20.f) };
+	TArray<float> OutSprungMasses;
+	FSuspensionUtility::ComputeSprungMasses(LocalSpringPositions, RootBodyInstance->GetMassOverride(), OutSprungMasses);
+
+	// Calculate spring damping values we will use for physics simulation from the normalized damping ratio
+	for (int SpringIdx = 0; SpringIdx < CachedSuspensionInfo.Num(); SpringIdx++)
+	{
+		auto& Susp = CachedSuspensionInfo[SpringIdx];
+		float NaturalFrequency = FSuspensionUtility::ComputeNaturalFrequency(CachedSuspensionInfo[SpringIdx].SuspensionData.SpringRate, OutSprungMasses[SpringIdx]);
+		float Damping = FSuspensionUtility::ComputeDamping(CachedSuspensionInfo[SpringIdx].SuspensionData.SpringRate, OutSprungMasses[SpringIdx], CachedSuspensionInfo[SpringIdx].SuspensionData.DampingRatio);
+
+		CachedSuspensionInfo[SpringIdx].ReboundDamping = Damping;
+		CachedSuspensionInfo[SpringIdx].BoundDamping = Damping;
+		CachedSuspensionInfo[SpringIdx].RestingForce = OutSprungMasses[SpringIdx] * -GravityAir;
+	}
+}
+
+
+void AAVBaseVehicle::SetupVehicleCurves()
+{
+	// Initializing acceleration curves
+	if (EngineAccelerationCurve)
+	{
+		MaxAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetLastKey().Time;
+		MinAccelerationCurveTime = EngineAccelerationCurve->FloatCurve.GetFirstKey().Time;
+		MaxSpeed = EngineAccelerationCurve->FloatCurve.GetLastKey().Value;
+		MaxBackwardsSpeed = EngineAccelerationCurve->FloatCurve.GetFirstKey().Value;
+	}
+	else
+	{
+		MaxAccelerationCurveTime = 1.f;
+		MinAccelerationCurveTime = -1.f;
+		MaxSpeed = 2000.f;
+		MaxBackwardsSpeed = -2000.f;
+		UE_LOG(LogTemp, Warning, TEXT("EngineAccelerationCurve missing, assuming default values."));
+	}
+
+	if (EngineDecelerationCurve)
+	{
+		MaxDecelerationCurveTime = EngineDecelerationCurve->FloatCurve.GetLastKey().Time;
+	}
+	else
+	{
+		MaxDecelerationCurveTime = 1.f;
+		UE_LOG(LogTemp, Warning, TEXT("EngineDecelerationCurve missing, assuming default values."));
+	}
+
+	if (!SteeringActionCurve)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SteeringActionCurve missing, assuming default values."));
+	}
+
+	if (!AirControlCurve)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AirControlCurve missing, assuming default values."));
+	}
+
+
+#if WITH_EDITOR
+	ensureMsgf(FMath::Max(FMath::Max(MaxSpeed, FMath::Abs(MaxBackwardsSpeed)), MaxSpeedBoosting) < TerminalSpeed, TEXT("Terminal Speed is lower than the max speed values."));
+#endif
 }

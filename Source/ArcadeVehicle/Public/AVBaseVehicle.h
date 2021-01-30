@@ -75,34 +75,44 @@ public:
 	float SuspensionLength;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float BoundDamping;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float ReboundDamping;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SpringRate;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float DampingRatio;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
+	float SuspensionLoadRatio;
 
 	/* Trace Half Size */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FVector2D TraceHalfSize;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float DEPRECATED_BoundDamping;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float DEPRECATED_ReboundDamping;
+
 	FSuspensionData() :
 		SuspensionLength(60.f),
-		BoundDamping(10.f),
-		ReboundDamping(0.9f),
 		SpringRate(50.f),
-		TraceHalfSize(30.f, 30.f)
+		DampingRatio(0.5f),
+		SuspensionLoadRatio(0.5f),
+		TraceHalfSize(30.f, 30.f),
+		DEPRECATED_BoundDamping(10.f),
+		DEPRECATED_ReboundDamping(0.9f)
 	{
 
 	}
 
-	FSuspensionData(float inSuspensionLength, float inBoundDamping, float inReboundDamping, float inSpringRate, FVector2D inTraceHalfSize) :
+	FSuspensionData(float inSuspensionLength, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize, float DEPRECATED_BD, float DEPRECATED_RD) :
 		SuspensionLength(inSuspensionLength),
-		BoundDamping(inBoundDamping),
-		ReboundDamping(inReboundDamping),
 		SpringRate(inSpringRate),
-		TraceHalfSize(inTraceHalfSize)
+		DampingRatio(inDampingRatio),
+		SuspensionLoadRatio(inSuspensionLoadRatio),
+		TraceHalfSize(inTraceHalfSize),
+		DEPRECATED_BoundDamping(DEPRECATED_BD),
+		DEPRECATED_ReboundDamping(DEPRECATED_RD)
 	{
 
 	}
@@ -123,6 +133,15 @@ public:
 	FSuspensionData SuspensionData;
 
 	UPROPERTY(BlueprintReadOnly)
+	float BoundDamping;
+
+	UPROPERTY(BlueprintReadOnly)
+	float ReboundDamping;
+
+	UPROPERTY(BlueprintReadOnly)
+	float RestingForce;
+
+	UPROPERTY(BlueprintReadOnly)
 	float DisplacementInput;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -131,6 +150,9 @@ public:
 	FCachedSuspensionInfo() :
 		ImpactNormal(FVector::ZeroVector),
 		SuspensionData(FSuspensionData()),
+		BoundDamping(0.f),
+		ReboundDamping(0.f),
+		RestingForce(0.f),
 		DisplacementInput(0.f),
 		LastDisplacement(0.f)
 	{
@@ -199,7 +221,12 @@ public:
 
 public:
 
-	// Delegate for physics step
+	/* Initialises the vehicle */
+	void InitVehicle();
+
+	/* Prepares the different curves of the vehicle */
+	void SetupVehicleCurves();
+
 	FDelegateHandle OnPhysSceneStepHandle;
 	void PhysSceneStep(FPhysScene* PhysScene, float DeltaTime);
 
@@ -207,18 +234,39 @@ public:
 	void PhysicsTick(float SubstepDeltaTime);
 
 	/**
-	/* Returns true if the wheel is within the suspension distance threshold (meaning it is in the ground)                                                                     
+	/* Applies certain force magnitude to a suspension point. Gathers also environmental data such as the ground friction or resistance for that suspension point.
 	**/
 	UFUNCTION()
-	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FCachedSuspensionInfo &InCachedInfo);
+	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FCachedSuspensionInfo &InCachedInfo, float DeltaTime);
 
+	/**
+	/*	Computes the force magnitude for a suspension point
+	**/
+	UFUNCTION(BlueprintPure)
+	virtual float GetSuspensionForceMagnitude(const FCachedSuspensionInfo& InCachedInfo, float DeltaTime) const;
+
+	/**
+	/*	Computes the vehicle drag force
+	**/
+	UFUNCTION(BlueprintPure)
+	virtual FVector GetFrictionDragForce() const;
+
+	/**
+	/*	Unifies the calculation of all the suspension points.
+	**/
 	UFUNCTION()
-	virtual void ApplySuspensionForces();
+	virtual void ApplySuspensionForces(float DeltaTime);
 
+	/**
+	/*	Tracing function employed to compute the suspensions.
+	**/
 	UFUNCTION(BlueprintNativeEvent, meta = (DisplayName = "TraceFunc"))
 	bool TraceFunc(FVector Start, FVector End, FVector2D HalfSize, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit);
 
-	UFUNCTION()
+	/**
+	/*	Returns the current center of mass of the vehicle.
+	**/
+	UFUNCTION(BlueprintPure)
 	FVector GetOffsetedCenterOfVehicle() const;
 
 	UFUNCTION()
@@ -437,6 +485,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
+
+	// DEPRECATED
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bTrialSetup = false;
 
 public:
 

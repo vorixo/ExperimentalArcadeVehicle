@@ -249,7 +249,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		}
 	}
 
-	const bool bWantsToIdle = (CurrentSimplifiedDirection == ESimplifiedDirection::Idle && FMath::IsNearlyZero(InfluencialDirection));
+	const bool bWantsToIdle = (CurrentSimplifiedDirection == ESimplifiedDirection::Idle && FMath::IsNearlyZero(InfluencialDirection) && !bIsBoosting);
 		
 	if (bWantsToIdle)
 	{

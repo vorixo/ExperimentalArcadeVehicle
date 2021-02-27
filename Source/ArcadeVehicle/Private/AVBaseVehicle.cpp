@@ -416,12 +416,6 @@ float AAVBaseVehicle::GetSuspensionForceMagnitude(const FCachedSuspensionInfo& I
 	const float DampingForce = LocalWheelVelocity * Damping;
 	const float SuspensionForce = StiffnessForce - DampingForce;
 
-	if (bTrialSetup)
-	{
-		// FIXMEVORI: DEPRECATED
-		return SuspensionForce;
-	}
-
 	const float ForceMagnitude = InCachedInfo.SuspensionData.SuspensionLoadRatio * SuspensionForce + (1.f - InCachedInfo.SuspensionData.SuspensionLoadRatio) * InCachedInfo.RestingForce;
 
 	return ForceMagnitude;
@@ -525,7 +519,6 @@ void AAVBaseVehicle::ComputeBasedMovement()
 			FVector const DeltaPosition = NewWorldPos - RGLocation;
 			NewTransform.AddToTranslation(DeltaPosition);
 
-			// fixmevori: experiment with different types of teleports. Listen to the community to see what they think.
 			RootBodyInstance->SetBodyTransform(NewTransform, ETeleportType::None);
 		}
 		
@@ -923,22 +916,6 @@ void AAVBaseVehicle::InitVehicle()
 	CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
 	
 	SetupVehicleCurves();
-
-	// DEPRECATED
-	if (bTrialSetup)
-	{
-		CachedSuspensionInfo[FRONT_LEFT].BoundDamping = SuspensionFront.DEPRECATED_BoundDamping;
-		CachedSuspensionInfo[FRONT_LEFT].ReboundDamping = SuspensionFront.DEPRECATED_ReboundDamping;
-		CachedSuspensionInfo[FRONT_RIGHT].BoundDamping = SuspensionFront.DEPRECATED_BoundDamping;
-		CachedSuspensionInfo[FRONT_RIGHT].ReboundDamping = SuspensionFront.DEPRECATED_ReboundDamping;
-
-		CachedSuspensionInfo[BACK_LEFT].BoundDamping = SuspensionRear.DEPRECATED_BoundDamping;
-		CachedSuspensionInfo[BACK_LEFT].ReboundDamping = SuspensionRear.DEPRECATED_ReboundDamping;
-		CachedSuspensionInfo[BACK_RIGHT].BoundDamping = SuspensionRear.DEPRECATED_BoundDamping;
-		CachedSuspensionInfo[BACK_RIGHT].ReboundDamping = SuspensionRear.DEPRECATED_ReboundDamping;
-
-		return;
-	}
 	
 	TArray<FVector> LocalSpringPositions = { FrontLeft - FVector(0,0,20.f) , BackLeft - FVector(0,0,20.f), FrontRight - FVector(0,0,20.f), BackRight - FVector(0,0,20.f) };
 	TArray<float> OutSprungMasses;
@@ -953,7 +930,7 @@ void AAVBaseVehicle::InitVehicle()
 
 		CachedSuspensionInfo[SpringIdx].ReboundDamping = Damping;
 		CachedSuspensionInfo[SpringIdx].BoundDamping = Damping;
-		CachedSuspensionInfo[SpringIdx].RestingForce = OutSprungMasses[SpringIdx] * -GravityAir;
+		CachedSuspensionInfo[SpringIdx].RestingForce = OutSprungMasses[SpringIdx] * -GravityGround;
 	}
 }
 

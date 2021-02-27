@@ -87,32 +87,22 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FVector2D TraceHalfSize;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float DEPRECATED_BoundDamping;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float DEPRECATED_ReboundDamping;
-
 	FSuspensionData() :
 		SuspensionLength(60.f),
 		SpringRate(50.f),
 		DampingRatio(0.5f),
 		SuspensionLoadRatio(0.5f),
-		TraceHalfSize(30.f, 30.f),
-		DEPRECATED_BoundDamping(10.f),
-		DEPRECATED_ReboundDamping(0.9f)
+		TraceHalfSize(30.f, 30.f)
 	{
 
 	}
 
-	FSuspensionData(float inSuspensionLength, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize, float DEPRECATED_BD, float DEPRECATED_RD) :
+	FSuspensionData(float inSuspensionLength, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize) :
 		SuspensionLength(inSuspensionLength),
 		SpringRate(inSpringRate),
 		DampingRatio(inDampingRatio),
 		SuspensionLoadRatio(inSuspensionLoadRatio),
-		TraceHalfSize(inTraceHalfSize),
-		DEPRECATED_BoundDamping(DEPRECATED_BD),
-		DEPRECATED_ReboundDamping(DEPRECATED_RD)
+		TraceHalfSize(inTraceHalfSize)
 	{
 
 	}
@@ -170,11 +160,11 @@ struct ARCADEVEHICLE_API FBasedPlatformInfo
 	UPROPERTY(BlueprintReadOnly)
 	UPrimitiveComponent* MovementBase;
 
-	/** Location relative to MovementBase. Only valid if HasRelativeLocation() is true. */
+	/** Location relative to MovementBase. */
 	UPROPERTY(BlueprintReadOnly)
 	FVector_NetQuantize100 Location;
 
-	/** Rotation: relative to MovementBase if HasRelativeRotation() is true, absolute otherwise. */
+	/** Rotation relative to MovementBase. */
 	UPROPERTY(BlueprintReadOnly)
 	FQuat Rotation;
 
@@ -485,10 +475,6 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
-
-	// DEPRECATED
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	bool bTrialSetup = false;
 
 public:
 

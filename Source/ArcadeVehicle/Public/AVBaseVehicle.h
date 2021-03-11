@@ -20,7 +20,8 @@
 #define DEFAULT_GROUND_RESISTANCE 1
 #define TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET 2000.f
 #define IDLE_VEHICLE_FORCE 500.f
-#define ORIENT_ROTATION_VELOCITY_MAX_RATE 3.f
+#define ORIENT_ROTATION_VELOCITY_MAX_RATE 10.f
+#define BASE_GROUND_FRICTION 100
 
 
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
@@ -239,7 +240,7 @@ public:
 	/*	Computes the vehicle drag force
 	**/
 	UFUNCTION(BlueprintPure)
-	virtual FVector GetFrictionDragForce() const;
+	virtual FVector GetLateralFrictionDragForce() const;
 
 	/**
 	/*	Unifies the calculation of all the suspension points.
@@ -361,7 +362,12 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float CurrentAngularSpeed;
 
-	UPROPERTY(BlueprintReadWrite)
+	/* Gameplay driven friction value to compute ground lateral drag friction. Possible use case: drifting. */
+	UPROPERTY(BlueprintReadWrite, meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float LateralFrictionModifier;
+
+	/* DEPRECATED: Please use LateralFrictionModifier. */
+	UPROPERTY(BlueprintReadWrite, meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float ScalarFrictionVal;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -528,9 +534,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityGround;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float GroundFriction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GroundDetectionDistanceThreshold;

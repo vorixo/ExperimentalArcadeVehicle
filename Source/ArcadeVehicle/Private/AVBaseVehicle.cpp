@@ -29,9 +29,11 @@ AAVBaseVehicle::AAVBaseVehicle()
 	bOverRollForceThreshold = false;
 	GravityAir = -980.f;
 	GravityGround = -980.f;
+	
 	// Gameplay driven friction
-	ScalarFrictionVal = 1.f;
-	GroundFriction = 100.f;
+	LateralFrictionModifier = 1.f;
+	ScalarFrictionVal = 1.f; // DEPRECATED
+
 	bStickyWheels = false;
 	// Default to z grav
 	AvgedNormals = FVector::UpVector;
@@ -190,6 +192,9 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 {
 	if (!RootBodyInstance) return;
 
+	// DEPRECATION AREA:
+	LateralFrictionModifier = ScalarFrictionVal; // DEPRECATED
+
 	// Getting the transformation matrix of the object
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
 
@@ -226,7 +231,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (bIsMovingOnGround)
 	{
 		// Drag/Friction force
-		RootBodyInstance->AddForce(GetFrictionDragForce(), false, false);
+		RootBodyInstance->AddForce(GetLateralFrictionDragForce(), false, false);
 	}
 	
 	
@@ -422,9 +427,9 @@ float AAVBaseVehicle::GetSuspensionForceMagnitude(const FCachedSuspensionInfo& I
 }
 
 
-FVector AAVBaseVehicle::GetFrictionDragForce() const
+FVector AAVBaseVehicle::GetLateralFrictionDragForce() const
 {
-	const FVector FrictionDragForce = bIsMovingOnGround ? ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ScalarFrictionVal * GroundFriction * CurrentGroundFriction)) * RGRightVector : FVector::ZeroVector;
+	const FVector FrictionDragForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (LateralFrictionModifier * CurrentGroundFriction * BASE_GROUND_FRICTION)) * RGRightVector;
 	return FrictionDragForce;
 }
 
@@ -635,10 +640,8 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 
 			if (bOrientRotationToMovementInAir)
 			{
-				const float forward_signed_speed = (RGForwardVector | CurrentHorizontalVelocity);
-				const FVector forward_velocity = (RGForwardVector * forward_signed_speed * DirectionFactor);
-				const FVector non_forward_velocity = CurrentHorizontalVelocity - forward_velocity;
-				ThrottleForce = non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * OrientRotationToMovementInAirInfluenceRate * ORIENT_ROTATION_VELOCITY_MAX_RATE;
+				ThrottleForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * 
+								(ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector;
 			}
 			else
 			{
@@ -932,6 +935,12 @@ void AAVBaseVehicle::InitVehicle()
 		CachedSuspensionInfo[SpringIdx].BoundDamping = Damping;
 		CachedSuspensionInfo[SpringIdx].RestingForce = OutSprungMasses[SpringIdx] * -GravityGround;
 	}
+
+	// DEPRECATION AREA --
+#if WITH_EDITOR
+	ensureMsgf(false, TEXT("ScalarFrictionVal has been deprecated, please use LateralFrictionModifier and remove ScalarFrictionVal."));
+#endif
+
 }
 
 

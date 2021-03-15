@@ -46,9 +46,6 @@ public:
 	uint8 bTraceHit : 1;
 
 	UPROPERTY()
-	uint8 bOverRollForceThreshold : 1;
-
-	UPROPERTY()
 	float GroundFriction;
 
 	UPROPERTY()
@@ -57,7 +54,6 @@ public:
 	FSuspensionHitInfo() :
 		bWheelOnGround(false),
 		bTraceHit(false),
-		bOverRollForceThreshold(true),
 		GroundFriction(DEFAULT_GROUND_FRICTION),
 		GroundResistance(DEFAULT_GROUND_RESISTANCE)
 	{
@@ -177,6 +173,14 @@ enum class EBasedPlatformSetup : uint8 {
 	IgnoreBasedMovement		= 0		UMETA(DisplayName = "Ignore Based Movement"),
 	IgnoreBasedRotation		= 1		UMETA(DisplayName = "Ignore Based Rotation"),
 	ApplyBasedMovement		= 2		UMETA(DisplayName = "Apply Based Movement"),
+};
+
+
+UENUM(BlueprintType)
+enum class EAirNavigationMode : uint8 {
+	None = 0					UMETA(DisplayName = "None"),
+	Predictive = 1				UMETA(DisplayName = "Ballistic Prediction"),
+	GroundAdaptative = 2		UMETA(DisplayName = "Ground Adaptative"),
 };
 
 
@@ -339,6 +343,16 @@ public:
 	UFUNCTION()
 	void ComputeBasedMovement();
 
+
+	UFUNCTION(BlueprintCallable)
+	bool KartBallisticPrediction(
+		FVector StartPos,
+		FVector LaunchVelocity,
+		TEnumAsByte<ECollisionChannel> TraceChannel,
+		float SimFrequency,
+		float MaxSimTime,
+		FVector& OutNormal);
+
 protected:
 	// Reference to MMTPawn root component
 	UPROPERTY()
@@ -386,9 +400,6 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly)
 	uint8 bIsCloseToGround : 1;
-
-	UPROPERTY(BlueprintReadOnly)
-	uint8 bOverRollForceThreshold : 1;
 
 	UPROPERTY(BlueprintReadWrite)
 	float CurrentThrottleAxis;
@@ -471,6 +482,10 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float LastTimeGearSwapped;
 
+	/* Is the vehicle being flipped? */
+	UPROPERTY(BlueprintReadOnly)
+	bool bFlipping;
+
 	/** 1: Max influence 0: Min Influence **/
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir"))
 	float OrientRotationToMovementInAirInfluenceRate;
@@ -529,6 +544,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EBasedPlatformSetup BasedMovementSetup;
 
+	/* Decides on how the vehicle behaves while air navigating. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	EAirNavigationMode AirNavigationMode;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityAir;
 
@@ -537,9 +556,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GroundDetectionDistanceThreshold;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float AntiRollForcedDistanceThreshold;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float LinearDampingAir;

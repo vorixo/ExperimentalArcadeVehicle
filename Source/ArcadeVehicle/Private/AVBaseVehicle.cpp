@@ -26,7 +26,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 	SuspensionRear = FSuspensionData();
 	bIsMovingOnGround = false;
 	bIsCloseToGround = false;
-	bOverRollForceThreshold = false;
 	GravityAir = -980.f;
 	GravityGround = -980.f;
 	
@@ -52,7 +51,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 	TorqueSpeed = 12.f;
 	BrakinDeceleration = 3000.f;
 	GroundDetectionDistanceThreshold = 800.f;
-	AntiRollForcedDistanceThreshold = 100.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
 	RGUpVector = FVector::ZeroVector;
 	RGRightVector = FVector::ZeroVector;
@@ -73,6 +71,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	StopThreshold = 10.f;
 	InfluencialDirection = 0.f;
 	bIsGearReady = true;
+	AirNavigationMode = EAirNavigationMode::None;
+	bFlipping = false;
 	ResetVehicle();
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -400,7 +400,6 @@ FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCache
 			sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
 		}		
 		sHitInfo.bTraceHit = true;
-		sHitInfo.bOverRollForceThreshold = OutHit.Distance > AntiRollForcedDistanceThreshold;
 
 		InCachedInfo.ImpactNormal = OutHit.ImpactNormal;
 		return sHitInfo;
@@ -449,7 +448,6 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
 	bCompletelyInTheGround = WheelsTouchingTheGround == NUMBER_OF_WHEELS;
-	bOverRollForceThreshold = (BackRightSuspension.bOverRollForceThreshold + FrontRightSuspension.bOverRollForceThreshold + FrontLeftSuspension.bOverRollForceThreshold + BackLeftSuspension.bOverRollForceThreshold) > 2;
 	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
 	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
 	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
@@ -640,8 +638,8 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 
 			if (bOrientRotationToMovementInAir)
 			{
-				ThrottleForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * 
-								(ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector;
+
+				ThrottleForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector;
 			}
 			else
 			{
@@ -748,30 +746,117 @@ void AAVBaseVehicle::SetStickyWheels(bool inStickyWheels)
 
 void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 {
-	FVector GravityForce = FVector(0.f, 0.f, bIsMovingOnGround ? GravityGround : GravityAir);
-	FVector CorrectionalUpVectorFlippingForce = FVector::UpVector;
+	const bool bUseAvgedNormals = (bStickyWheels && bIsCloseToGround && !AvgedNormals.IsZero());
+	const FVector VehicleAlignDirection = bUseAvgedNormals ? AvgedNormals : FVector::UpVector;
 
-	if (bStickyWheels && bIsCloseToGround && !AvgedNormals.IsZero()) 
-	{
-		GravityForce = AvgedNormals * (bIsMovingOnGround ? GravityGround : GravityAir);
-		CorrectionalUpVectorFlippingForce = AvgedNormals;	
-	}
+	// Gravity force
+	FVector GravityForce = VehicleAlignDirection * (bIsMovingOnGround ? GravityGround : GravityAir);
+	RootBodyInstance->AddForce(GravityForce, false, false);
 
-	// Air vectors
+
+	// Air control + unflipping forces + predictive landing
 	if (bCompletelyInTheAir)
 	{
 		TimeFalling += DeltaTime;
+		FVector TargetUpVector = VehicleAlignDirection;
+		
+		if (AirNavigationMode == EAirNavigationMode::Predictive)
+		{
+			const bool bPredictionSucceed = KartBallisticPrediction(RGLocation, CurrentHorizontalVelocity, ECollisionChannel::ECC_WorldDynamic, 7.f, 1.f, TargetUpVector);
+			const float DotProductVehicle = FVector::DotProduct(RGUpVector, TargetUpVector);
+			TargetUpVector = (bPredictionSucceed && DotProductVehicle > 0.5f) ? TargetUpVector : VehicleAlignDirection;
+		}
+		else if (AirNavigationMode == EAirNavigationMode::GroundAdaptative)
+		{
+			TargetUpVector = AvgedNormals;
+			const float DotProductAlign = FVector::DotProduct(VehicleAlignDirection, TargetUpVector);
+			TargetUpVector = (bIsCloseToGround && !AvgedNormals.IsZero() && DotProductAlign > 0.5f) ? TargetUpVector : VehicleAlignDirection;
+		}
+		
+		const float FinalDotProductVehicle = FVector::DotProduct(RGUpVector, TargetUpVector);
+		
+		if(bFlipping) 
+		{
+			bFlipping = (FinalDotProductVehicle < 0.9f);
+		}
+		else
+		{
+			bFlipping = (FinalDotProductVehicle < -0.3f);
+		}
 
-		const float DotProductUpvectors = FVector::DotProduct(RGUpVector, CorrectionalUpVectorFlippingForce);
-		const float MappedDotProduct = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(1, 0.f), DotProductUpvectors);
+		const float AntiRollMagnitude = bFlipping ? 2500.f : 200.f;
+		const FVector AntiRollForce = FVector::CrossProduct(TargetUpVector, -RGUpVector) * AntiRollMagnitude;
+		FVector AngularFinalForce = SteeringForce + AntiRollForce;
+		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce * 0.01, false);
+	}
+}
 
-		// Anti roll force (the car should be straight!)
-		const FVector AntiRollForce = bOverRollForceThreshold ? FVector::CrossProduct(CorrectionalUpVectorFlippingForce, -RGUpVector) * FMath::Lerp(200.f, 1000.f, MappedDotProduct) : FVector::ZeroVector;
-		const FVector AngularFinalForce = (AntiRollForce + SteeringForce) * 0.01;
-		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce, false);
+
+bool AAVBaseVehicle::KartBallisticPrediction(
+	FVector StartPos,
+	FVector LaunchVelocity,
+	TEnumAsByte<ECollisionChannel> TraceChannel,
+	float SimFrequency,
+	float MaxSimTime,
+	FVector& OutNormal)
+{
+	bool bBlockingHit = false;
+	FHitResult FinalHit;
+	FinalHit.Init();
+
+	UWorld *MyWorld = GetWorld();
+
+	if (SimFrequency > KINDA_SMALL_NUMBER && MyWorld)
+	{
+		const float SubstepDeltaTime = 1.f / SimFrequency;
+		const FVector GravityForce = ((bStickyWheels && bIsCloseToGround && !AvgedNormals.IsZero()) ? AvgedNormals : FVector::UpVector) * GravityAir;
+		
+		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(KartBallisticPrediction));
+		QueryParams.AddIgnoredActor(this);
+
+		FVector CurrentVel = LaunchVelocity;
+		FVector TraceStart = StartPos;
+		FVector TraceEnd = TraceStart;
+		float CurrentTime = 0.f;
+
+		FHitResult ChannelTraceHit(NoInit);
+
+		while (CurrentTime < MaxSimTime)
+		{
+			// Limit step to not go further than total time.
+			const float ActualStepDeltaTime = FMath::Min(MaxSimTime - CurrentTime, SubstepDeltaTime);
+			CurrentTime += ActualStepDeltaTime;
+
+			#if ENABLE_DRAW_DEBUG
+			if (bDebugInfo)
+			{
+				UKismetSystemLibrary::DrawDebugSphere(this, TraceStart, 10.f, 12, FLinearColor::Red, 0.f);
+			}
+			#endif
+			
+			// Integrate (Velocity Verlet method)
+			TraceStart = TraceEnd;
+			const FVector OldVelocity = CurrentVel;
+			CurrentVel = OldVelocity + (GravityForce * ActualStepDeltaTime);
+			TraceEnd = TraceStart + (OldVelocity + CurrentVel) * (0.5f * ActualStepDeltaTime);
+
+			// fixmevori: Consider replacing by linetrace due to thin sphere?
+			const bool bHit = MyWorld->SweepSingleByChannel(ChannelTraceHit, TraceStart, TraceEnd, FQuat::Identity, TraceChannel, FCollisionShape::MakeSphere(2.f), QueryParams);
+
+			// See if there were any hits.
+			if (bHit)
+			{
+				// Hit! We are done. Choose trace with earliest hit time.
+				FinalHit = ChannelTraceHit;
+				bBlockingHit = true;
+				break;
+			}
+		}
+
+		OutNormal = FinalHit.Normal;
 	}
 
-	RootBodyInstance->AddForce(GravityForce, false, false);
+	return bBlockingHit;
 }
 
 
@@ -832,12 +917,6 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 			FrontRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			FrontLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			BackLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
-		}
-
-		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, GroundDetectionDistanceThreshold)
-			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, AntiRollForcedDistanceThreshold))
-		{
-			AntiRollForcedDistanceThreshold = FMath::Min(GroundDetectionDistanceThreshold, AntiRollForcedDistanceThreshold);
 		}
 	}
 }

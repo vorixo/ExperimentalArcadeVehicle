@@ -480,6 +480,9 @@ protected:
 	ESimplifiedDirection LastUsedGear;
 
 	UPROPERTY(BlueprintReadOnly)
+	ESimplifiedDirection LastUsedGroundGear;
+
+	UPROPERTY(BlueprintReadOnly)
 	float LastTimeGearSwapped;
 
 	/* Is the vehicle being flipped? */

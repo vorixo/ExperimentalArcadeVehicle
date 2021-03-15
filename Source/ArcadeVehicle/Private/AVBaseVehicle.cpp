@@ -72,6 +72,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	InfluencialDirection = 0.f;
 	bIsGearReady = true;
 	AirNavigationMode = EAirNavigationMode::None;
+	LastUsedGear = ESimplifiedDirection::Idle;
+	LastUsedGroundGear = ESimplifiedDirection::Idle;
 	bFlipping = false;
 	ResetVehicle();
 
@@ -350,6 +352,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 	// Rest variables - Last tick calculations
 	LastUsedGear = CurrentSimplifiedDirection;
+	LastUsedGroundGear = bIsMovingOnGround ? LastUsedGear : LastUsedGroundGear;
 	ThrottleForce = FVector::ZeroVector;
 	SteeringForce = FVector::ZeroVector;
 }
@@ -622,11 +625,10 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
 		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
 	{
-		// fixmevori: simplify
 		// Direction Calc
-		const float DirectionSign = FMath::Sign(CurrentHorizontalSpeed);
-		const float DirectionFactor = (DirectionSign == 0 || (CurrentHorizontalSpeed <= 0 && CurrentHorizontalSpeed > -100 && !bIsMovingOnGround)) ? 1.f : DirectionSign;
-		// Steering acceleration
+		const float DirectionFactor = (LastUsedGroundGear == ESimplifiedDirection::Reverse) ? -1.f : 1.f;
+
+		// fixmevori: Steering acceleration - Find a better way to represent this curve. Maybe integrate with speed?
 		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
 		float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
 

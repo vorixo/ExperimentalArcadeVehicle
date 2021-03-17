@@ -31,13 +31,11 @@ AAVBaseVehicle::AAVBaseVehicle()
 	
 	// Gameplay driven friction
 	LateralFrictionModifier = 1.f;
-	ScalarFrictionVal = 1.f; // DEPRECATED
-
 	bStickyWheels = false;
 	// Default to z grav
 	AvgedNormals = FVector::UpVector;
 	LinearDampingAir = 0.01f;
-	AngularDampingGround = 10.0f;
+	AngularDamping = 10.0f;
 	MaxSpeedBoosting = 3000.f;
 	CurrentAngularSpeed = 0.f;
 	CurrentHorizontalSpeed = 0.f;
@@ -49,6 +47,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	VehicleAcceleration = 5000.f;
 	VehicleBoostAcceleration = 3000.f;
 	TorqueSpeed = 12.f;
+	AirTorqueSpeed = 15.f;
+	AirStrafeSpeed = 1000.f;
 	BrakinDeceleration = 3000.f;
 	GroundDetectionDistanceThreshold = 800.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
@@ -60,15 +60,13 @@ AAVBaseVehicle::AAVBaseVehicle()
 	LegalSpeedOffset = 100.f;
 	bCompletelyInTheAir = false;
 	bCompletelyInTheGround = true;
-	AirYawSpeed = 20.f;
-	AirStrafeSpeed = 1000.f;
-	bOrientRotationToMovementInAir = false;
+	bOrientRotationToMovementInAir = true;
 	OrientRotationToMovementInAirInfluenceRate = 1.f;
 	AccelerationInfluenceRateWhileBraking = 0.3f;
 	SteeringDecelerationSideVelocityFactorScale = 40.f;
 	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4;
 	SwapGearDirectionDelay = 0.4f;
-	StopThreshold = 10.f;
+	StopThreshold = 40.f;
 	InfluencialDirection = 0.f;
 	bIsGearReady = true;
 	AirNavigationMode = EAirNavigationMode::None;
@@ -194,9 +192,6 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 {
 	if (!RootBodyInstance) return;
 
-	// DEPRECATION AREA:
-	LateralFrictionModifier = ScalarFrictionVal; // DEPRECATED
-
 	// Getting the transformation matrix of the object
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
 
@@ -235,7 +230,6 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		// Drag/Friction force
 		RootBodyInstance->AddForce(GetLateralFrictionDragForce(), false, false);
 	}
-	
 	
 	/************************************************************************/
 	/* End apply gravity and sliding forces									*/
@@ -303,7 +297,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		
 	// Forward and backwards speed work with 0 damping.
 	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
-	RootBodyInstance->AngularDamping = bCompletelyInTheAir ? 0.f : AngularDampingGround;
+	RootBodyInstance->AngularDamping = AngularDamping;
 	RootBodyInstance->UpdateDampingProperties();
 
 
@@ -636,16 +630,15 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 		{
 			// Air steering input stack - fixmevori: experimental curve
 			const float ControlRatio = AirControlCurve ? AirControlCurve->GetFloatValue(TimeFalling) : 1.f;
-			InputTorqueRatio = CurrentSteeringAxis * AirYawSpeed * ControlRatio;
+			InputTorqueRatio = CurrentSteeringAxis * AirTorqueSpeed * ControlRatio;
 
 			if (bOrientRotationToMovementInAir)
 			{
-
-				ThrottleForce = ((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector;
+				RootBodyInstance->AddForce(((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector, false, false);
 			}
 			else
 			{
-				ThrottleForce = CurrentSteeringAxis * RGRightVector * AirStrafeSpeed * ControlRatio;
+				RootBodyInstance->AddForce(CurrentSteeringAxis * RGRightVector * AirStrafeSpeed * ControlRatio);
 			}
 		}
 		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
@@ -786,10 +779,9 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 			bFlipping = (FinalDotProductVehicle < -0.3f);
 		}
 
-		const float AntiRollMagnitude = bFlipping ? 2500.f : 200.f;
+		const float AntiRollMagnitude = bFlipping ? 250.f : 25.f;
 		const FVector AntiRollForce = FVector::CrossProduct(TargetUpVector, -RGUpVector) * AntiRollMagnitude;
-		FVector AngularFinalForce = SteeringForce + AntiRollForce;
-		RootBodyInstance->SetAngularVelocityInRadians(AngularFinalForce * 0.01, false);
+		SteeringForce += AntiRollForce;
 	}
 }
 
@@ -859,6 +851,45 @@ bool AAVBaseVehicle::KartBallisticPrediction(
 	}
 
 	return bBlockingHit;
+}
+
+
+float AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData)
+{
+#if WITH_EDITOR
+	ensureMsgf(!IsLocallyControlled(), TEXT("CalcSuspensionSimulatedProxy cannot be called from Locally Controlled Clients."));
+#endif
+	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
+	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
+	const FVector TraceEnd = TraceStart - (RGWorldTransform.GetUnitAxis(EAxis::Z) * (GroundDetectionDistanceThreshold));
+
+	FHitResult OutHit;
+
+	if (TraceFunc(TraceStart, TraceEnd, SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
+	{
+		return FMath::Min(OutHit.Distance, SuspensionData.SuspensionLength);
+	}
+
+	return SuspensionData.SuspensionLength;
+}
+
+
+void AAVBaseVehicle::WheelsVisuals(const float SuspensionOffsetZ, FVector2D& FrontWheels, FVector2D& RearWheels)
+{
+	if (IsLocallyControlled())
+	{
+		FrontWheels.X = -(SuspensionOffsetZ + CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
+		FrontWheels.Y = -(SuspensionOffsetZ + CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput);
+		RearWheels.X = -(SuspensionOffsetZ + CachedSuspensionInfo[BACK_LEFT].DisplacementInput);
+		RearWheels.Y = -(SuspensionOffsetZ + CachedSuspensionInfo[BACK_RIGHT].DisplacementInput);
+	}
+	else
+	{
+		FrontWheels.X = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront));
+		FrontWheels.Y = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront));
+		RearWheels.X = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear));
+		RearWheels.Y = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(BackRight, SuspensionRear));
+	}
 }
 
 
@@ -1001,7 +1032,8 @@ void AAVBaseVehicle::InitVehicle()
 	
 	SetupVehicleCurves();
 	
-	TArray<FVector> LocalSpringPositions = { FrontLeft - FVector(0,0,20.f) , BackLeft - FVector(0,0,20.f), FrontRight - FVector(0,0,20.f), BackRight - FVector(0,0,20.f) };
+	// fixmevori: Don't hardcode these values, give them meaning.
+	TArray<FVector> LocalSpringPositions = { FrontLeft - FVector(0,0,40.f) , BackLeft - FVector(0,0,40.f), FrontRight - FVector(0,0,40.f), BackRight - FVector(0,0,40.f) };
 	TArray<float> OutSprungMasses;
 	FSuspensionUtility::ComputeSprungMasses(LocalSpringPositions, RootBodyInstance->GetMassOverride(), OutSprungMasses);
 
@@ -1019,7 +1051,6 @@ void AAVBaseVehicle::InitVehicle()
 
 	// DEPRECATION AREA --
 #if WITH_EDITOR
-	ensureMsgf(false, TEXT("ScalarFrictionVal has been deprecated, please use LateralFrictionModifier and remove ScalarFrictionVal."));
 #endif
 
 }

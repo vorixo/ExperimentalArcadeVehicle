@@ -353,6 +353,20 @@ public:
 		float MaxSimTime,
 		FVector& OutNormal);
 
+
+	/** Calc Suspension function used for simulated proxies	*/
+	UFUNCTION()
+	float CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData);
+
+	/** Handle to compute wheel ik
+		- Simulated proxy: VFX + IK
+		- Owning Client: IK
+		X: Left wheel
+		Y: Right wheel
+	*/
+	UFUNCTION(BlueprintCallable)
+	void WheelsVisuals(const float SuspensionOffsetZ, FVector2D& FrontWheels, FVector2D& RearWheels);
+
 protected:
 	// Reference to MMTPawn root component
 	UPROPERTY()
@@ -379,10 +393,6 @@ protected:
 	/* Gameplay driven friction value to compute ground lateral drag friction. Possible use case: drifting. */
 	UPROPERTY(BlueprintReadWrite, meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float LateralFrictionModifier;
-
-	/* DEPRECATED: Please use LateralFrictionModifier. */
-	UPROPERTY(BlueprintReadWrite, meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float ScalarFrictionVal;
 
 	UPROPERTY(BlueprintReadOnly)
 	FVector AvgedNormals;
@@ -490,7 +500,7 @@ protected:
 	bool bFlipping;
 
 	/** 1: Max influence 0: Min Influence **/
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir", ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
 	float OrientRotationToMovementInAirInfluenceRate;
 
 	/** 1: Max influence 0: Min Influence **/
@@ -564,7 +574,7 @@ public:
 	float LinearDampingAir;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float AngularDampingGround;
+	float AngularDamping;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float MaxSpeedBoosting;
@@ -579,7 +589,7 @@ public:
 	float TorqueSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float AirYawSpeed;
+	float AirTorqueSpeed;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "!bOrientRotationToMovementInAir"))
 	float AirStrafeSpeed;

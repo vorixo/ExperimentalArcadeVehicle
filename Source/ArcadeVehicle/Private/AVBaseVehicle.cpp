@@ -73,6 +73,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	LastUsedGear = ESimplifiedDirection::Idle;
 	LastUsedGroundGear = ESimplifiedDirection::Idle;
 	bFlipping = false;
+	bComputeAxleForces = false;
 	ResetVehicle();
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -103,7 +104,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	BackLeftHandle = CreateDefaultSubobject<UStaticMeshComponent>("BackLeftHandle");
 	if (BackLeftHandle && BackRightHandle && FrontRightHandle && FrontLeftHandle)
 	{
-		static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderHelpMesh(TEXT("StaticMesh'/ArcadeVehicle/HelperCube.HelperCube'"));
+		static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderHelpMesh(TEXT("StaticMesh'/Engine/BasicShapes/Cube1.Cube1'"));
 		BackRightHandle->SetStaticMesh(CylinderHelpMesh.Object);
 		FrontRightHandle->SetStaticMesh(CylinderHelpMesh.Object);
 		FrontLeftHandle->SetStaticMesh(CylinderHelpMesh.Object);
@@ -173,6 +174,8 @@ void AAVBaseVehicle::BeginPlay()
 				// Register physics step delegate
 				OnPhysSceneStepHandle = PScene->OnPhysSceneStep.AddUObject(this, &AAVBaseVehicle::PhysSceneStep);
 				InitVehicle();
+				// Very basic sanity check to ensure someone is not adding more wheels than the absolutely necesary
+				ensure(NUMBER_OF_WHEELS == CachedSuspensionInfo.Num());
 			}
 		}
 	}
@@ -352,74 +355,18 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 }
 
 
-FSuspensionHitInfo AAVBaseVehicle::CalcSuspension(FVector RelativeOffset, FCachedSuspensionInfo& InCachedInfo, float DeltaTime)
-{
-	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
-	const FVector TraceEnd = TraceStart - (RGUpVector * (GroundDetectionDistanceThreshold));
-	FSuspensionHitInfo sHitInfo;
-
-	FHitResult OutHit;
-	
-	if (TraceFunc(TraceStart, TraceEnd, InCachedInfo.SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
-	{
-		InCachedInfo.DisplacementInput = FMath::Min(OutHit.Distance, InCachedInfo.SuspensionData.SuspensionLength);
-
-		#if ENABLE_DRAW_DEBUG
-		if (bDebugInfo)
-		{
-			UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
-			if (World) 
-			{
-				UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(InCachedInfo.DisplacementInput).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
-				DrawDebugSweptBox(GetWorld(), TraceStart, TraceStart - (RGUpVector * (InCachedInfo.SuspensionData.SuspensionLength)), RGWorldTransform.GetRotation(), 
-					FVector(InCachedInfo.SuspensionData.TraceHalfSize.X, InCachedInfo.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, InCachedInfo.DisplacementInput > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
-			}
-		}
-		#endif
-
-		if (OutHit.Distance <= InCachedInfo.SuspensionData.SuspensionLength)
-		{
-			const float ForceMagnitude = GetSuspensionForceMagnitude(InCachedInfo, DeltaTime);
-	
-			InCachedInfo.LastDisplacement = InCachedInfo.DisplacementInput;
-
-			// FIXMEVORI: We can also use here AvgedNormals for a suspension regulated result
-			const FVector FinalForce = (OutHit.ImpactNormal * ForceMagnitude);
-			
-			RootBodyInstance->AddForceAtPosition(FinalForce, TraceStart, false);
-
-			// Trace hits and it is within the suspension length size, hence the wheel is on the ground
-			sHitInfo.bWheelOnGround = true;
-
-			// Physical material properties for this wheel contacting the ground
-			const bool bPhysMatExists = OutHit.PhysMaterial.IsValid();
-			sHitInfo.GroundFriction = bPhysMatExists ? OutHit.PhysMaterial->Friction : DEFAULT_GROUND_FRICTION;
-			sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
-		}		
-		sHitInfo.bTraceHit = true;
-
-		InCachedInfo.ImpactNormal = OutHit.ImpactNormal;
-		return sHitInfo;
-	}
-
-	return sHitInfo;
-}
-
-
 float AAVBaseVehicle::GetSuspensionForceMagnitude(const FCachedSuspensionInfo& InCachedInfo, float DeltaTime) const
-{
+{									
 	const float LocalWheelVelocity = (InCachedInfo.DisplacementInput - InCachedInfo.LastDisplacement)/DeltaTime;
 
-	const float SpringDisplacement = InCachedInfo.SuspensionData.SuspensionLength - InCachedInfo.DisplacementInput;
+	const float SpringDisplacement = InCachedInfo.SuspensionLength - InCachedInfo.DisplacementInput;
 
 	const float Damping = (InCachedInfo.DisplacementInput < InCachedInfo.LastDisplacement) ? InCachedInfo.BoundDamping : InCachedInfo.ReboundDamping;
 	const float StiffnessForce = SpringDisplacement * InCachedInfo.SuspensionData.SpringRate;
 	const float DampingForce = LocalWheelVelocity * Damping;
 	const float SuspensionForce = StiffnessForce - DampingForce;
 
-	const float ForceMagnitude = InCachedInfo.SuspensionData.SuspensionLoadRatio * SuspensionForce + (1.f - InCachedInfo.SuspensionData.SuspensionLoadRatio) * InCachedInfo.RestingForce;
-
-	return ForceMagnitude;
+	return SuspensionForce;
 }
 
 
@@ -432,26 +379,102 @@ FVector AAVBaseVehicle::GetLateralFrictionDragForce() const
 
 void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 {
+	// Compute suspension forces
+	TArray<FSuspensionHitInfo> HitInfos;
+	HitInfos.Init(FSuspensionHitInfo(), NUMBER_OF_WHEELS);
+
+	for (int SpringIdx = 0; SpringIdx < NUMBER_OF_WHEELS; SpringIdx++)
+	{
+		auto& Susp = CachedSuspensionInfo[SpringIdx];
+
+		const FVector WheelWorldLocation = RGWorldTransform.TransformPosition(Susp.WheelRelativeLocation);
+		const FVector TraceStart = WheelWorldLocation + RGUpVector * (Susp.SuspensionData.SuspensionMaxRaise);
+		const FVector TraceEnd = WheelWorldLocation - RGUpVector * (GroundDetectionDistanceThreshold);
+		const float TraceFullLength = Susp.SuspensionLength + Susp.SuspensionData.WheelRadius;
+
+		auto& sHitInfo = HitInfos[SpringIdx];
+
+		sHitInfo.WheelWorldLocation = WheelWorldLocation;
+		Susp.DisplacementInput = TraceFullLength - Susp.SuspensionData.WheelRadius;
+
+		FHitResult OutHit;
+		if (TraceFunc(TraceStart, TraceEnd, Susp.SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
+		{
+			#if ENABLE_DRAW_DEBUG
+			if (bDebugInfo)
+			{
+				UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull);
+				if (World)
+				{
+					UKismetSystemLibrary::DrawDebugString(World, TraceStart, FString::SanitizeFloat(Susp.LastDisplacement).Mid(0, 4), nullptr, FLinearColor::White, 0.f);
+					DrawDebugSweptBox(GetWorld(), TraceStart, TraceStart - (RGUpVector * TraceFullLength), RGWorldTransform.GetRotation(),
+						FVector(Susp.SuspensionData.TraceHalfSize.X, Susp.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, Susp.LastDisplacement > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
+
+					const FVector RealWheelLocation = TraceStart - (RGUpVector * Susp.LastDisplacement);
+					UKismetSystemLibrary::DrawDebugCylinder(this, RealWheelLocation + (RGRightVector * Susp.SuspensionData.TraceHalfSize.X), RealWheelLocation - (RGRightVector * Susp.SuspensionData.TraceHalfSize.X),
+						Susp.SuspensionData.WheelRadius, 12, FLinearColor::White, 0.f);
+
+					UKismetSystemLibrary::DrawDebugCylinder(this, WheelWorldLocation + (RGRightVector * Susp.SuspensionData.TraceHalfSize.X), WheelWorldLocation - (RGRightVector * Susp.SuspensionData.TraceHalfSize.X),
+						Susp.SuspensionData.WheelRadius, 12, FLinearColor::Black, 0.f);
+				}
+			}
+			#endif
+
+			if (OutHit.Distance <= TraceFullLength)
+			{
+				Susp.DisplacementInput = OutHit.Distance - Susp.SuspensionData.WheelRadius;
+				const float ForceMagnitude = GetSuspensionForceMagnitude(Susp, DeltaTime);
+				Susp.LastDisplacement = Susp.DisplacementInput;
+
+				const FVector FinalForce = (OutHit.ImpactNormal * ForceMagnitude);
+
+				RootBodyInstance->AddForceAtPosition(FinalForce, WheelWorldLocation, false);
+				
+				// Storing resting force for axle calculus later
+				sHitInfo.SusForce = Susp.SuspensionData.SuspensionLoadRatio * ForceMagnitude + (1.f - Susp.SuspensionData.SuspensionLoadRatio) * Susp.RestingForce;
+
+				// Trace hits and it is within the suspension length size, hence the wheel is on the ground
+				sHitInfo.bWheelOnGround = true;
+
+				// Physical material properties for this wheel contacting the ground
+				const bool bPhysMatExists = OutHit.PhysMaterial.IsValid();
+				sHitInfo.GroundFriction = bPhysMatExists ? OutHit.PhysMaterial->Friction : DEFAULT_GROUND_FRICTION;
+				sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
+			}
+			sHitInfo.bTraceHit = true;
+			Susp.ImpactNormal = OutHit.ImpactNormal;
+		}
+	}
 	
-	const FSuspensionHitInfo BackRightSuspension = CalcSuspension(BackRight, CachedSuspensionInfo[BACK_RIGHT], DeltaTime);
-	const FSuspensionHitInfo FrontRightSuspension = CalcSuspension(FrontRight, CachedSuspensionInfo[FRONT_RIGHT], DeltaTime);
-	const FSuspensionHitInfo FrontLeftSuspension = CalcSuspension(FrontLeft, CachedSuspensionInfo[FRONT_LEFT], DeltaTime);
-	const FSuspensionHitInfo BackLeftSuspension = CalcSuspension(BackLeft, CachedSuspensionInfo[BACK_LEFT], DeltaTime);
-	
+	// Compute axle load balancing forces
+	if (bComputeAxleForces)
+	{
+		for (int AxleIdx = 0; AxleIdx < NUMBER_OF_AXLES; AxleIdx++)
+		{
+			const int WheelIdxA = AxleIdx * NUMBER_OF_AXLES;
+			const int WheelIdxB = WheelIdxA + 1;
+
+			const float RollbarScaling = 1.f;
+			const float ForceDiffOnAxleF = HitInfos[WheelIdxA].SusForce - HitInfos[WheelIdxB].SusForce;
+			const FVector ForceVector0 = RGUpVector * ForceDiffOnAxleF * RollbarScaling;
+			const FVector ForceVector1 = RGUpVector * ForceDiffOnAxleF * -RollbarScaling;
+
+			RootBodyInstance->AddForceAtPosition(ForceVector0, HitInfos[WheelIdxA].WheelWorldLocation, false);
+			RootBodyInstance->AddForceAtPosition(ForceVector1, HitInfos[WheelIdxB].WheelWorldLocation, false);
+		}
+	}
+
 	// On landing impl. If in the previous step it was in the air and now is in the ground 
 	const bool bWasMovingOnGround = bIsMovingOnGround;
 
-	const uint8 WheelsTouchingTheGround = (BackRightSuspension.bWheelOnGround + FrontRightSuspension.bWheelOnGround + FrontLeftSuspension.bWheelOnGround + BackLeftSuspension.bWheelOnGround);
+	const uint8 WheelsTouchingTheGround = (HitInfos[FRONT_LEFT].bWheelOnGround + HitInfos[FRONT_RIGHT].bWheelOnGround + HitInfos[BACK_LEFT].bWheelOnGround + HitInfos[BACK_RIGHT].bWheelOnGround);
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
 	bCompletelyInTheGround = WheelsTouchingTheGround == NUMBER_OF_WHEELS;
-	bIsCloseToGround = (BackRightSuspension.bTraceHit + FrontRightSuspension.bTraceHit + FrontLeftSuspension.bTraceHit + BackLeftSuspension.bTraceHit) > 2;
-	CurrentGroundFriction = (BackRightSuspension.GroundFriction + FrontRightSuspension.GroundFriction + FrontLeftSuspension.GroundFriction + BackLeftSuspension.GroundFriction) / NUMBER_OF_WHEELS;
-	CurrentGroundScalarResistance = (BackRightSuspension.GroundResistance + FrontRightSuspension.GroundResistance + FrontLeftSuspension.GroundResistance + BackLeftSuspension.GroundResistance) / NUMBER_OF_WHEELS;
-		
-	AvgedNormals = FVector::ZeroVector;
-	for (FCachedSuspensionInfo csi : CachedSuspensionInfo) AvgedNormals += csi.ImpactNormal;
-	AvgedNormals /= NUMBER_OF_WHEELS;
+	bIsCloseToGround = (HitInfos[FRONT_LEFT].bTraceHit + HitInfos[FRONT_RIGHT].bTraceHit + HitInfos[BACK_LEFT].bTraceHit + HitInfos[BACK_RIGHT].bTraceHit) > 2;
+	CurrentGroundFriction = (HitInfos[FRONT_LEFT].GroundFriction + HitInfos[FRONT_RIGHT].GroundFriction + HitInfos[BACK_LEFT].GroundFriction + HitInfos[BACK_RIGHT].GroundFriction) / NUMBER_OF_WHEELS;
+	CurrentGroundScalarResistance = (HitInfos[FRONT_LEFT].GroundResistance + HitInfos[FRONT_RIGHT].GroundResistance + HitInfos[BACK_LEFT].GroundResistance + HitInfos[BACK_RIGHT].GroundResistance) / NUMBER_OF_WHEELS;
+	AvgedNormals = (CachedSuspensionInfo[FRONT_LEFT].ImpactNormal + CachedSuspensionInfo[FRONT_RIGHT].ImpactNormal + CachedSuspensionInfo[BACK_LEFT].ImpactNormal + CachedSuspensionInfo[BACK_RIGHT].ImpactNormal) / NUMBER_OF_WHEELS;
 
 	// On landed event
 	if (!bWasMovingOnGround && bIsMovingOnGround)
@@ -862,33 +885,33 @@ float AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, const
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
 	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
 	const FVector TraceEnd = TraceStart - (RGWorldTransform.GetUnitAxis(EAxis::Z) * (GroundDetectionDistanceThreshold));
-
+	const float TraceFullLength = SuspensionData.SuspensionMaxDrop + SuspensionData.SuspensionMaxRaise + SuspensionData.WheelRadius;
 	FHitResult OutHit;
 
 	if (TraceFunc(TraceStart, TraceEnd, SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
-		return FMath::Min(OutHit.Distance, SuspensionData.SuspensionLength);
+		return FMath::Min(OutHit.Distance, TraceFullLength);
 	}
 
-	return SuspensionData.SuspensionLength;
+	return TraceFullLength;
 }
 
 
-void AAVBaseVehicle::WheelsVisuals(const float SuspensionOffsetZ, FVector2D& FrontWheels, FVector2D& RearWheels)
+void AAVBaseVehicle::WheelsVisuals(FVector& FR, FVector& FL, FVector& RR, FVector& RL)
 {
 	if (IsLocallyControlled())
 	{
-		FrontWheels.X = -(SuspensionOffsetZ + CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
-		FrontWheels.Y = -(SuspensionOffsetZ + CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput);
-		RearWheels.X = -(SuspensionOffsetZ + CachedSuspensionInfo[BACK_LEFT].DisplacementInput);
-		RearWheels.Y = -(SuspensionOffsetZ + CachedSuspensionInfo[BACK_RIGHT].DisplacementInput);
+		FL = FVector(FrontLeft.X, FrontLeft.Y, ((FrontLeft.Z + SuspensionFront.SuspensionMaxRaise) - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput));
+		FR = FVector(FrontRight.X, FrontRight.Y, ((FrontRight.Z + SuspensionFront.SuspensionMaxRaise) - CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput));
+		RL = FVector(BackLeft.X, BackLeft.Y, ((BackLeft.Z + SuspensionRear.SuspensionMaxRaise) - CachedSuspensionInfo[BACK_LEFT].DisplacementInput));
+		RR = FVector(BackRight.X, BackRight.Y, ((BackRight.Z + SuspensionRear.SuspensionMaxRaise) - CachedSuspensionInfo[BACK_RIGHT].DisplacementInput));
 	}
 	else
 	{
-		FrontWheels.X = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront));
-		FrontWheels.Y = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront));
-		RearWheels.X = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear));
-		RearWheels.Y = -(SuspensionOffsetZ + CalcSuspensionSimulatedProxy(BackRight, SuspensionRear));
+		FL = FVector(FrontLeft.X, FrontLeft.Y, ((FrontLeft.Z + SuspensionFront.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront)));
+		FR = FVector(FrontRight.X, FrontRight.Y, ((FrontRight.Z + SuspensionFront.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront)));
+		RL = FVector(BackLeft.X, BackLeft.Y, ((BackLeft.Z + SuspensionRear.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear)));
+		RR = FVector(BackRight.X, BackRight.Y, ((BackRight.Z + SuspensionRear.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(BackRight, SuspensionRear)));
 	}
 }
 
@@ -930,26 +953,22 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 
 	const FProperty* PropertyThatChanged = PropertyChangedEvent.MemberProperty;
 	if (PropertyThatChanged)
-	{
-		
-		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.SuspensionLength)
-			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.SuspensionLength)
-			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionFront.TraceHalfSize)
-			|| PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, SuspensionRear.TraceHalfSize))
-		{
-			// Since it's a half size we need to enforce full size when scaling the 1M box
-			BackRightHandle->SetRelativeScale3D( FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
-			FrontRightHandle->SetRelativeScale3D( FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-			FrontLeftHandle->SetRelativeScale3D( FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-			BackLeftHandle->SetRelativeScale3D( FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
-		}
-		
+	{	
 		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(AAVBaseVehicle, bHideHelpHandlersInPIE))
 		{
 			BackRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			FrontRightHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			FrontLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
 			BackLeftHandle->SetHiddenInGame(bHideHelpHandlersInPIE);
+		}
+
+		if (PropertyThatChanged->GetFName() == GET_MEMBER_NAME_CHECKED(FSuspensionData, TraceHalfSize))
+		{
+			// Since it's a half size we need to enforce full size when scaling the 1M box
+			BackRightHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f);
+			FrontRightHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f);
+			FrontLeftHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f);
+			BackLeftHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f);
 		}
 	}
 }
@@ -971,10 +990,10 @@ void AAVBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
 void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 {
 	// We won't allow the user to scale the handlers
-	BackRightHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
-	FrontRightHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-	FrontLeftHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f);
-	BackLeftHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f);
+	BackRightHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f);
+	FrontRightHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f);
+	FrontLeftHandle->SetRelativeScale3D(FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f);
+	BackLeftHandle->SetRelativeScale3D(FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f);
 
 	// We don't allow the user to rotate the handlers
 	BackRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
@@ -986,10 +1005,10 @@ void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 
 void AAVBaseVehicle::UpdateHandlersTransformCDO()
 {
-	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
-	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
-	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.SuspensionLength) / 100.f));
-	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.SuspensionLength) / 100.f));
+	BackRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackRight, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f));
+	FrontRightHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontRight, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f));
+	FrontLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, FrontLeft, FVector(SuspensionFront.TraceHalfSize.X * 2, SuspensionFront.TraceHalfSize.Y * 2, SuspensionFront.WheelRadius * 2) / 100.f));
+	BackLeftHandle->SetRelativeTransform(FTransform(FRotator::ZeroRotator, BackLeft, FVector(SuspensionRear.TraceHalfSize.X * 2, SuspensionRear.TraceHalfSize.Y * 2, SuspensionRear.WheelRadius * 2) / 100.f));
 }
 #endif // WITH_EDITOR
 
@@ -1026,27 +1045,32 @@ void AAVBaseVehicle::InitVehicle()
 {
 	CachedSuspensionInfo.Init(FCachedSuspensionInfo(), NUMBER_OF_WHEELS);
 	CachedSuspensionInfo[FRONT_LEFT].SuspensionData = SuspensionFront;
+	CachedSuspensionInfo[FRONT_LEFT].WheelRelativeLocation = FrontLeft;
 	CachedSuspensionInfo[FRONT_RIGHT].SuspensionData = SuspensionFront;
+	CachedSuspensionInfo[FRONT_RIGHT].WheelRelativeLocation = FrontRight;
 	CachedSuspensionInfo[BACK_LEFT].SuspensionData = SuspensionRear;
+	CachedSuspensionInfo[BACK_LEFT].WheelRelativeLocation = BackLeft;
 	CachedSuspensionInfo[BACK_RIGHT].SuspensionData = SuspensionRear;
+	CachedSuspensionInfo[BACK_RIGHT].WheelRelativeLocation = BackRight;
 	
 	SetupVehicleCurves();
-	
-	// fixmevori: Don't hardcode these values, give them meaning.
-	TArray<FVector> LocalSpringPositions = { FrontLeft - FVector(0,0,40.f) , BackLeft - FVector(0,0,40.f), FrontRight - FVector(0,0,40.f), BackRight - FVector(0,0,40.f) };
+
+	TArray<FVector> LocalSpringPositions = { FrontLeft, FrontRight, BackLeft, BackRight }; // Order relevant
 	TArray<float> OutSprungMasses;
 	FSuspensionUtility::ComputeSprungMasses(LocalSpringPositions, RootBodyInstance->GetMassOverride(), OutSprungMasses);
 
 	// Calculate spring damping values we will use for physics simulation from the normalized damping ratio
-	for (int SpringIdx = 0; SpringIdx < CachedSuspensionInfo.Num(); SpringIdx++)
+	for (int SpringIdx = 0; SpringIdx < NUMBER_OF_WHEELS; SpringIdx++)
 	{
 		auto& Susp = CachedSuspensionInfo[SpringIdx];
-		float NaturalFrequency = FSuspensionUtility::ComputeNaturalFrequency(CachedSuspensionInfo[SpringIdx].SuspensionData.SpringRate, OutSprungMasses[SpringIdx]);
-		float Damping = FSuspensionUtility::ComputeDamping(CachedSuspensionInfo[SpringIdx].SuspensionData.SpringRate, OutSprungMasses[SpringIdx], CachedSuspensionInfo[SpringIdx].SuspensionData.DampingRatio);
 
-		CachedSuspensionInfo[SpringIdx].ReboundDamping = Damping;
-		CachedSuspensionInfo[SpringIdx].BoundDamping = Damping;
-		CachedSuspensionInfo[SpringIdx].RestingForce = OutSprungMasses[SpringIdx] * -GravityGround;
+		float NaturalFrequency = FSuspensionUtility::ComputeNaturalFrequency(Susp.SuspensionData.SpringRate, OutSprungMasses[SpringIdx]);
+		float Damping = FSuspensionUtility::ComputeDamping(Susp.SuspensionData.SpringRate, OutSprungMasses[SpringIdx], Susp.SuspensionData.DampingRatio);
+
+		Susp.SuspensionLength = Susp.SuspensionData.SuspensionMaxDrop + Susp.SuspensionData.SuspensionMaxRaise;
+		Susp.ReboundDamping = Damping;
+		Susp.BoundDamping = Damping;
+		Susp.RestingForce = OutSprungMasses[SpringIdx] * -GravityGround;
 	}
 
 	// DEPRECATION AREA --

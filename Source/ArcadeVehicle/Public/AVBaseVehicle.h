@@ -9,11 +9,14 @@
 #include "AVBaseVehicle.generated.h"
 
 // Suspension
-#define BACK_RIGHT 0
+
+#define FRONT_LEFT 0
 #define FRONT_RIGHT 1
-#define FRONT_LEFT 2
-#define BACK_LEFT 3
+#define BACK_LEFT 2
+#define BACK_RIGHT 3
 #define NUMBER_OF_WHEELS 4
+#define NUMBER_OF_AXLES 2
+
 
 // Misc vars
 #define DEFAULT_GROUND_FRICTION 1
@@ -51,11 +54,19 @@ public:
 	UPROPERTY()
 	float GroundResistance;
 
+	UPROPERTY()
+	float SusForce;
+
+	UPROPERTY()
+	FVector WheelWorldLocation;
+
 	FSuspensionHitInfo() :
 		bWheelOnGround(false),
 		bTraceHit(false),
 		GroundFriction(DEFAULT_GROUND_FRICTION),
-		GroundResistance(DEFAULT_GROUND_RESISTANCE)
+		GroundResistance(DEFAULT_GROUND_RESISTANCE),
+		SusForce(0.f),
+		WheelWorldLocation(FVector::ZeroVector)
 	{
 
 	}
@@ -69,7 +80,10 @@ struct ARCADEVEHICLE_API FSuspensionData
 public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	float SuspensionLength;
+	float SuspensionMaxRaise;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	float SuspensionMaxDrop;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	float SpringRate;
@@ -80,22 +94,29 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
 	float SuspensionLoadRatio;
 
+	/* Radius of the suspension */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float WheelRadius;
+
 	/* Trace Half Size */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FVector2D TraceHalfSize;
 
 	FSuspensionData() :
-		SuspensionLength(60.f),
+		SuspensionMaxRaise(5.f),
+		SuspensionMaxDrop(5.f),
 		SpringRate(50.f),
 		DampingRatio(0.5f),
 		SuspensionLoadRatio(0.5f),
+		WheelRadius(20.f),
 		TraceHalfSize(30.f, 30.f)
 	{
 
 	}
 
-	FSuspensionData(float inSuspensionLength, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize) :
-		SuspensionLength(inSuspensionLength),
+	FSuspensionData(float inSuspensionMaxRaise, float inSuspensionMaxDrop, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize) :
+		SuspensionMaxRaise(inSuspensionMaxRaise),
+		SuspensionMaxDrop(inSuspensionMaxDrop),
 		SpringRate(inSpringRate),
 		DampingRatio(inDampingRatio),
 		SuspensionLoadRatio(inSuspensionLoadRatio),
@@ -116,6 +137,9 @@ public:
 	UPROPERTY()
 	FVector ImpactNormal;
 
+	UPROPERTY()
+	FVector WheelRelativeLocation;
+
 	UPROPERTY(BlueprintReadOnly)
 	FSuspensionData SuspensionData;
 
@@ -134,14 +158,19 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	float LastDisplacement;
 
+	UPROPERTY(BlueprintReadOnly)
+	float SuspensionLength;
+
 	FCachedSuspensionInfo() :
 		ImpactNormal(FVector::ZeroVector),
+		WheelRelativeLocation(FVector::ZeroVector),
 		SuspensionData(FSuspensionData()),
 		BoundDamping(0.f),
 		ReboundDamping(0.f),
 		RestingForce(0.f),
 		DisplacementInput(0.f),
-		LastDisplacement(0.f)
+		LastDisplacement(0.f),
+		SuspensionLength(0.f)
 	{
 
 	}
@@ -227,12 +256,6 @@ public:
 
 	/* This event is called on every physics tick, including sub-steps. */
 	void PhysicsTick(float SubstepDeltaTime);
-
-	/**
-	/* Applies certain force magnitude to a suspension point. Gathers also environmental data such as the ground friction or resistance for that suspension point.
-	**/
-	UFUNCTION()
-	FSuspensionHitInfo CalcSuspension(FVector HoverComponentOffset, FCachedSuspensionInfo &InCachedInfo, float DeltaTime);
 
 	/**
 	/*	Computes the force magnitude for a suspension point
@@ -365,7 +388,7 @@ public:
 		Y: Right wheel
 	*/
 	UFUNCTION(BlueprintCallable)
-	void WheelsVisuals(const float SuspensionOffsetZ, FVector2D& FrontWheels, FVector2D& RearWheels);
+	void WheelsVisuals(FVector& FR, FVector& FL, FVector& RR, FVector& RL);
 
 protected:
 	// Reference to MMTPawn root component
@@ -510,6 +533,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
 
+	/** Computes axle forces: Doesn't work combined with substepping. **/
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	bool bComputeAxleForces;
+
 public:
 
 #if WITH_EDITOR
@@ -534,7 +561,7 @@ public:
 	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* CollisionMesh;
 
-	// These four properties are really relevant: for visualization: Category = HoverComponent, VisibleAnywhere
+	// Hoover/Wheel point position
 	UPROPERTY(BlueprintReadOnly)
 	FVector BackRight;
 

@@ -79,32 +79,39 @@ struct ARCADEVEHICLE_API FSuspensionData
 
 public:
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	/** How far the wheel can go above the resting position */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SuspensionMaxRaise;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	/** How far the wheel can drop below the resting position */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SuspensionMaxDrop;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	/** Spring Force */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SpringRate;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	/** Spring damping: (0 - no damping) and (1 - critical damping) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
 	float DampingRatio;
 
+	/**
+	*	When 0 no weight load is transferred, 1 is Normal weight shift. Lower value cures lift off oversteer. Requires bComputeAxleForces = true
+	*/
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
 	float SuspensionLoadRatio;
 
-	/* Radius of the suspension */
+	/* Radius of the wheel */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float WheelRadius;
 
-	/* Trace Half Size */
+	/* Trace Half Size (wheel dimensions) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FVector2D TraceHalfSize;
 
 	FSuspensionData() :
-		SuspensionMaxRaise(5.f),
-		SuspensionMaxDrop(5.f),
+		SuspensionMaxRaise(20.f),
+		SuspensionMaxDrop(12.f),
 		SpringRate(50.f),
 		DampingRatio(0.5f),
 		SuspensionLoadRatio(0.5f),
@@ -114,12 +121,13 @@ public:
 
 	}
 
-	FSuspensionData(float inSuspensionMaxRaise, float inSuspensionMaxDrop, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, FVector2D inTraceHalfSize) :
+	FSuspensionData(float inSuspensionMaxRaise, float inSuspensionMaxDrop, float inSpringRate, float inDampingRatio, float inSuspensionLoadRatio, float inWheelRadius, FVector2D inTraceHalfSize) :
 		SuspensionMaxRaise(inSuspensionMaxRaise),
 		SuspensionMaxDrop(inSuspensionMaxDrop),
 		SpringRate(inSpringRate),
 		DampingRatio(inDampingRatio),
 		SuspensionLoadRatio(inSuspensionLoadRatio),
+		WheelRadius(inWheelRadius),
 		TraceHalfSize(inTraceHalfSize)
 	{
 
@@ -177,21 +185,21 @@ public:
 };
 
 
-USTRUCT(BlueprintType)
+USTRUCT()
 struct ARCADEVEHICLE_API FBasedPlatformInfo
 {
 	GENERATED_USTRUCT_BODY()
 	
 	/** Component we are based on */
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	UPrimitiveComponent* MovementBase;
 
 	/** Location relative to MovementBase. */
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	FVector_NetQuantize100 Location;
 
 	/** Rotation relative to MovementBase. */
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	FQuat Rotation;
 
 };
@@ -506,7 +514,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float TimeFalling;
 	
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	FBasedPlatformInfo BasedPlatformInfo;
 
 	UPROPERTY(BlueprintReadOnly)
@@ -526,14 +534,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir", ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))
 	float OrientRotationToMovementInAirInfluenceRate;
 
-	/** 1: Max influence 0: Min Influence **/
+	/** How much the current Throttle affects the braking. 0: Min Influence, 1: Max influence */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float AccelerationInfluenceRateWhileBraking;
 
+	/** If true, the vehicle's gravity is the closest ground. If no closest ground is detected, -Z is employed. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	bool bStickyWheels;
 
-	/** Computes axle forces: Doesn't work combined with substepping. **/
+	/** Computes axle forces: Requires high precision. Works at 100 Hz. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool bComputeAxleForces;
 
@@ -561,7 +570,7 @@ public:
 	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* CollisionMesh;
 
-	// Hoover/Wheel point position
+	// Hoover/Wheel resting point position
 	UPROPERTY(BlueprintReadOnly)
 	FVector BackRight;
 
@@ -580,20 +589,23 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = SuspensionRear)
 	FSuspensionData SuspensionRear;
 
-	/* Decides on how the vehicle will behave on top of moving or rotating platforms. */
+	/* Decides how the vehicle behaves on top of moving or rotating platforms. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EBasedPlatformSetup BasedMovementSetup;
 
-	/* Decides on how the vehicle behaves while air navigating. */
+	/* Decides how the vehicle behaves while air navigating. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EAirNavigationMode AirNavigationMode;
 
+	/** "Down" force to apply while in the ground. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityAir;
 
+	/** "Down" force to apply while in the air. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityGround;
 
+	/** How far our wheel traces go down to detect close terrains for sticky wheels and ground snapping navigation. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GroundDetectionDistanceThreshold;
 
@@ -603,9 +615,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float AngularDamping;
 
+	/** Target speed when boosting. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float MaxSpeedBoosting;
 
+	/** Acceleration curve (Speed over time). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	UCurveFloat* EngineAccelerationCurve;
 
@@ -621,9 +635,11 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "!bOrientRotationToMovementInAir"))
 	float AirStrafeSpeed;
 
+	/** Vehicle moving force. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float VehicleAcceleration;
 
+	/** Acceleration when boosting. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float VehicleBoostAcceleration;
 

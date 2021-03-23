@@ -6,6 +6,10 @@
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "ChaosVehicles/ChaosVehiclesCore/Public/SuspensionUtility.h"
 
+#if WITH_EDITOR
+#include "PhysicsEngine/PhysicsSettings.h"
+#endif
+
 static int32 bDebugInfo = 0;
 FAutoConsoleVariableRef CVARDebugPlayableArea(
 	TEXT("AV.DisplayDebugInfo"),
@@ -26,8 +30,8 @@ AAVBaseVehicle::AAVBaseVehicle()
 	SuspensionRear = FSuspensionData();
 	bIsMovingOnGround = false;
 	bIsCloseToGround = false;
-	GravityAir = -980.f;
-	GravityGround = -980.f;
+	GravityAir = -2000.f;
+	GravityGround = -2000.f;
 	
 	// Gameplay driven friction
 	LateralFrictionModifier = 1.f;
@@ -45,7 +49,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	CurrentBrakeAxis = 0.f;
 	bTiltedThrottle = true;
 	VehicleAcceleration = 5000.f;
-	VehicleBoostAcceleration = 3000.f;
+	VehicleBoostAcceleration = 5000.f;
 	TorqueSpeed = 12.f;
 	AirTorqueSpeed = 15.f;
 	AirStrafeSpeed = 1000.f;
@@ -194,6 +198,19 @@ void AAVBaseVehicle::PhysSceneStep(FPhysScene* PhysScene, float DeltaTime)
 void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 {
 	if (!RootBodyInstance) return;
+
+#if WITH_EDITOR
+	const UPhysicsSettings* Settings = UPhysicsSettings::Get();
+	if (Settings && GetWorld()->GetTimeSeconds() > 5.f)
+	{
+		const float RequiredSteps = GetWorld()->GetDeltaSeconds() / Settings->MaxSubstepDeltaTime;
+		if (!ensure(RequiredSteps <= Settings->MaxSubsteps))
+		{
+			const FString SimulationMessage = FString::Printf(TEXT("The simulation requires more steps to be representative at the current Delta Time. Consider increasing MaxSubsteps if you desire MaxSubstepDeltaTime precision. Required Steps: %d"), FMath::CeilToInt(RequiredSteps));
+			PRINT_TICK(SimulationMessage);
+		}
+	}
+#endif
 
 	// Getting the transformation matrix of the object
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();

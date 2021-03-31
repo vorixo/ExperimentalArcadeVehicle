@@ -42,7 +42,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	AngularDamping = 10.0f;
 	MaxSpeedBoosting = 3000.f;
 	CurrentAngularSpeed = 0.f;
-	CurrentHorizontalSpeed = 0.f;
+	CachedSpeedSized = 0.f;
 	// Maximum speed that can ever be achieved, accelerating or not.
 	TerminalSpeed = 3500.f;
 	CurrentThrottleAxis = 0.f;
@@ -50,9 +50,9 @@ AAVBaseVehicle::AAVBaseVehicle()
 	bTiltedThrottle = true;
 	VehicleAcceleration = 5000.f;
 	VehicleBoostAcceleration = 5000.f;
-	TorqueSpeed = 12.f;
-	AirTorqueSpeed = 15.f;
-	AirStrafeSpeed = 1000.f;
+	AirTorqueAcceleration = 15.f;
+	TorqueAcceleration = 12.f;
+	AirStrafeAcceleration = 1000.f;
 	BrakinDeceleration = 3000.f;
 	GroundDetectionDistanceThreshold = 800.f;
 	AccelerationCenterOfMassOffset = FVector2D(50.f, 40.f);
@@ -163,7 +163,7 @@ void DrawDebugSweptBox(const UWorld* InWorld, FVector const& Start, FVector cons
 // Called when the game starts or when spawned
 void AAVBaseVehicle::BeginPlay()
 {
-	PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
+	const UPrimitiveComponent* PawnRootComponent = Cast<UPrimitiveComponent>(GetRootComponent());
 	
 	if (PawnRootComponent != NULL)
 	{
@@ -223,13 +223,12 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	RGRightVector = RGWorldTransform.GetUnitAxis(EAxis::Y);
 	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
 
-
 	// Calc velocities and Speed
-	CurrentHorizontalVelocity = FVector::VectorPlaneProject(RootBodyInstance->GetUnrealWorldVelocity(), RGUpVector);
-	CurrentHorizontalSpeed = FMath::Sign(FVector::DotProduct(CurrentHorizontalVelocity, RGForwardVector)) * CurrentHorizontalVelocity.Size();
-	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
-	CurrentAngularSpeed = FMath::Sign(FVector::DotProduct(CurrentAngularVelocity, RGUpVector)) * CurrentAngularVelocity.Size();
+	CurrentHorizontalVelocity = RootBodyInstance->GetUnrealWorldVelocity();
+	CachedSpeedSized = CurrentHorizontalVelocity.Size();
 	LocalVelocity = RGWorldTransform.InverseTransformVectorNoScale(CurrentHorizontalVelocity);
+	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
+	CurrentAngularSpeed = FVector::DotProduct(CurrentAngularVelocity, RGUpVector);
 
 	// Moving on top of moving surfaces
 	ComputeBasedMovement();
@@ -280,16 +279,20 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 	else
 	{
+		// START - Substract side velocity scaled from forward velocity  when turning
 		const FVector side_velocity = FMath::Abs(LocalVelocity.Y) * RGForwardVector;
 		const FVector non_forward_velocity = CurrentHorizontalVelocity.GetSafeNormal2D() * getMaxSpeed() - (side_velocity * SteeringDecelerationSideVelocityFactorScale);
-		const bool bTurnDeceleration = CurrentHorizontalSpeed > non_forward_velocity.Size() && !bIsBoosting && !FMath::IsNearlyZero(CurrentSteeringAxis);
+		const bool bTurnDeceleration = (LocalVelocity.X * LocalVelocity.X) > non_forward_velocity.SizeSquared() && !bIsBoosting && 
+			!FMath::IsNearlyZero(CurrentSteeringAxis) && CurrentSimplifiedDirection != ESimplifiedDirection::Idle;
 
 		if (bTurnDeceleration)
 		{
-			ThrottleForce = (non_forward_velocity.GetSafeNormal2D() * -CurrentHorizontalSpeed * SteeringDecelerationSideVelocityInterpolationSpeed);
+			ThrottleForce = (non_forward_velocity.GetSafeNormal2D() * -(LocalVelocity.X) * SteeringDecelerationSideVelocityInterpolationSpeed);
 		}
+		// END - Substract side velocity scaled from forward velocity  when turning
 
-		const float SpeedRatio = CurrentHorizontalSpeed / GetAbsMaxSpeedAxisIndependent();
+
+		const float SpeedRatio = CachedSpeedSized / GetAbsMaxSpeedAxisIndependent();
 		const bool bNoInput = (CurrentBrakeAxis > -0.1 && CurrentThrottleAxis < 0.1 && !bIsBoosting);
 		
 		// Clamping curve thresholds
@@ -307,7 +310,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		const FVector ThrottleAdjustmentRatio = CurrentHorizontalVelocity * (bNoInput) * GetDecelerationRatio();
 
 		// Forcing vehicle decceleration if they surpass the LegalSpeedOffset
-		const bool bIsGoingOverLegalSpeed = (FMath::Abs(CurrentHorizontalSpeed) > ((GetAbsMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
+		const bool bIsGoingOverLegalSpeed = (CachedSpeedSized > ((GetAbsMaxSpeedAxisIndependent() * CurrentGroundScalarResistance) + LegalSpeedOffset));
 		ThrottleForce = bIsGoingOverLegalSpeed ? FVector::VectorPlaneProject(-CurrentHorizontalVelocity.GetSafeNormal(), AvgedNormals) * getAcceleration() : ThrottleForce;
 
 		// Adjusting Throttle based on engine decceleration values
@@ -336,17 +339,17 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 	
 	// Vehicles can't go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
-	if (FMath::Abs(CurrentHorizontalSpeed) > FMath::Min(GetAbsMaxSpeedAxisIndependent(), GetTerminalSpeed()))
+	if (CachedSpeedSized > FMath::Min(GetAbsMaxSpeedAxisIndependent(), GetTerminalSpeed()))
 	{
-		const float BlendAlpha = (FMath::Abs(CurrentHorizontalSpeed) - GetAbsMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetAbsMaxSpeedAxisIndependent());
-		const float TerminalVelocityPreemptionFinalForce = FMath::Abs(CurrentHorizontalSpeed) > GetTerminalSpeed() ? BIG_NUMBER : FMath::Lerp(0.f, GetTerminalSpeed() + TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET, BlendAlpha);
+		const float BlendAlpha = (CachedSpeedSized - GetAbsMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetAbsMaxSpeedAxisIndependent());
+		const float TerminalVelocityPreemptionFinalForce = CachedSpeedSized > GetTerminalSpeed() ? BIG_NUMBER : FMath::Lerp(0.f, GetTerminalSpeed() + TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET, BlendAlpha);
 		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
 	
 	// We also want to help the vehicle get into an idle state
-	if (FMath::Abs(CurrentHorizontalSpeed) <= StopThreshold)
+	if (CachedSpeedSized <= StopThreshold)
 	{
-		const float BlendAlpha = FMath::Abs(CurrentHorizontalSpeed)/(StopThreshold);
+		const float BlendAlpha = CachedSpeedSized/(StopThreshold);
 		const float TerminalVelocityPreemptionFinalForce = FMath::Lerp(0.f, IDLE_VEHICLE_FORCE, BlendAlpha);
 		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
@@ -359,7 +362,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		UKismetSystemLibrary::DrawDebugSphere(this, GetOffsetedCenterOfVehicle(), 10.f, 12);
 		UKismetSystemLibrary::DrawDebugSphere(this, RGLocation, 10.f, 12);
-		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(CurrentHorizontalSpeed).Mid(0, 5), NULL,FLinearColor::Red);
+		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(LocalVelocity.X).Mid(0, 5), NULL,FLinearColor::Red);
 	}
 
 	// TODO: Vehicle Effects
@@ -630,7 +633,7 @@ void AAVBaseVehicle::ApplyThrottleInput(float DeltaTime)
 	if ((CurrentThrottleAxis >= 0.1f && bIsGearReady) || bIsBoosting)
 	{
 		AccelerationAccumulatedTime += DeltaTime;
-		if (CurrentHorizontalSpeed <= GetComputedSpeed() && bIsMovingOnGround)
+		if (LocalVelocity.X <= GetComputedSpeed() && bIsMovingOnGround)
 		{
 			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
 			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
@@ -645,7 +648,7 @@ void AAVBaseVehicle::ApplyReverseInput(float DeltaTime)
 	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting && bIsGearReady)
 	{
 		AccelerationAccumulatedTime -= DeltaTime;
-		if (CurrentHorizontalSpeed > GetComputedSpeed() && bIsMovingOnGround)
+		if (LocalVelocity.X > GetComputedSpeed() && bIsMovingOnGround)
 		{
 			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
 		}
@@ -655,33 +658,31 @@ void AAVBaseVehicle::ApplyReverseInput(float DeltaTime)
 
 void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 {
-	// Steering
-	if ((CurrentSteeringAxis >= 0.1f && CurrentAngularSpeed <= TorqueSpeed) ||
-		(CurrentSteeringAxis <= -0.1f && CurrentAngularSpeed >= -TorqueSpeed))
+	if (FMath::Abs(CurrentSteeringAxis) >= 0.1f)
 	{
-		// Direction Calc
-		const float DirectionFactor = (LastUsedGroundGear == ESimplifiedDirection::Reverse) ? -1.f : 1.f;
-
-		// fixmevori: Steering acceleration - Find a better way to represent this curve. Maybe integrate with speed?
-		const float AlphaInputTorque = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Clamp(FMath::Abs(CurrentHorizontalSpeed) / 1000.f, 0.f, 1.f)) : 1.f;
-		float InputTorqueRatio = FMath::Lerp(AlphaInputTorque, TorqueSpeed * CurrentSteeringAxis, AlphaInputTorque);
-
+ 		const float DirectionFactor = (LastUsedGroundGear == ESimplifiedDirection::Reverse) ? -1.f : 1.f;
 		if (bCompletelyInTheAir)
 		{
-			// Air steering input stack - fixmevori: experimental curve
+			//#todo: Find a way to clamp torque speed while in air (ask designer what to do with the curve).
 			const float ControlRatio = AirControlCurve ? AirControlCurve->GetFloatValue(TimeFalling) : 1.f;
-			InputTorqueRatio = CurrentSteeringAxis * AirTorqueSpeed * ControlRatio;
-
 			if (bOrientRotationToMovementInAir)
 			{
 				RootBodyInstance->AddForce(((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector, false, false);
 			}
 			else
 			{
-				RootBodyInstance->AddForce(CurrentSteeringAxis * RGRightVector * AirStrafeSpeed * ControlRatio);
+				RootBodyInstance->AddForce(CurrentSteeringAxis * RGRightVector * AirStrafeAcceleration * ControlRatio);
+			}
+			SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * AirTorqueAcceleration * ControlRatio;
+		}
+		else
+		{
+			const float TargetSteerSpeed = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Abs(LocalVelocity.X)) : 1.f;
+			if (FMath::Abs(CurrentAngularSpeed) <= TargetSteerSpeed)
+			{
+				SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * TorqueAcceleration;
 			}
 		}
-		SteeringForce = RGUpVector * DirectionFactor * InputTorqueRatio;
 	}
 }
 
@@ -691,7 +692,7 @@ void AAVBaseVehicle::ApplyBrakeInput(float DeltaTime)
 	// Compute Braking
 	if (IsBraking() && bIsMovingOnGround && !bIsBoosting)
 	{
-		if (CurrentHorizontalSpeed <= 0.0)
+		if (LocalVelocity.X <= 0.0)
 		{
 			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentThrottleAxis * BrakinDeceleration;
 		}
@@ -705,7 +706,7 @@ void AAVBaseVehicle::ApplyBrakeInput(float DeltaTime)
 
 float AAVBaseVehicle::GetAbsMaxSpeedAxisIndependent() const
 {
-	return FMath::Abs(CurrentHorizontalSpeed >= 0 ? getMaxSpeed() : getMaxBackwardsSpeed());
+	return FMath::Abs(LocalVelocity.X >= 0 ? getMaxSpeed() : getMaxBackwardsSpeed());
 }
 
 
@@ -941,15 +942,16 @@ float AAVBaseVehicle::GetTerminalSpeed() const
 
 bool AAVBaseVehicle::IsBraking() const
 {
-	return (CurrentBrakeAxis <= -0.1 && CurrentHorizontalSpeed > StopThreshold) ||
-		(CurrentThrottleAxis >= 0.1 && CurrentHorizontalSpeed < -StopThreshold);
+	// A vehicle is considered to be braking if the intended input direction goes against the current speed
+	return (CurrentBrakeAxis <= -0.1 && LocalVelocity.X > StopThreshold) ||
+		(CurrentThrottleAxis >= 0.1 && LocalVelocity.X < -StopThreshold);
 }
 
 
 ESimplifiedDirection AAVBaseVehicle::GetSimplifiedKartDirection() const
 {
-	return FMath::Abs(CurrentHorizontalSpeed) <= StopThreshold ? ESimplifiedDirection::Idle : 
-		(CurrentHorizontalSpeed > 0) ? ESimplifiedDirection::Forward : ESimplifiedDirection::Reverse;
+	return FMath::Abs(LocalVelocity.X) <= StopThreshold ? ESimplifiedDirection::Idle :
+		(LocalVelocity.X > 0) ? ESimplifiedDirection::Forward : ESimplifiedDirection::Reverse;
 }
 
 
@@ -1124,11 +1126,6 @@ void AAVBaseVehicle::SetupVehicleCurves()
 	{
 		MaxDecelerationCurveTime = 1.f;
 		UE_LOG(LogTemp, Warning, TEXT("EngineDecelerationCurve missing, assuming default values."));
-	}
-
-	if (!SteeringActionCurve)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("SteeringActionCurve missing, assuming default values."));
 	}
 
 	if (!AirControlCurve)

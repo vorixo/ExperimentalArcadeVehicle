@@ -361,21 +361,20 @@ public:
 	UFUNCTION(BlueprintPure)
 	bool IsBraking() const;
 
+	/** Maps the vehicle direction to a simple enum easy to read */
 	UFUNCTION(BlueprintPure)
 	ESimplifiedDirection GetSimplifiedKartDirection() const;
 
-	/** This function gets called when bIsMovingOnGround becomes true **/
+	/** This function gets called when bIsMovingOnGround becomes true */
 	virtual void Landed(const FVector& HitNormal);
 
 	UFUNCTION(BlueprintImplementableEvent)
 	void OnLanded(const FVector &HitNormal);
 
-	/** Computes the delta movement to apply on moving platforms **/
-	UFUNCTION()
+	/** Computes the delta movement to apply to the vehicle on moving platforms **/
 	void ComputeBasedMovement();
 
-
-	UFUNCTION(BlueprintCallable)
+	/** Computes the ballistic trajectory to apply the vehicle in the Ballistic air navigation mode. */
 	bool KartBallisticPrediction(
 		FVector StartPos,
 		FVector LaunchVelocity,
@@ -386,7 +385,6 @@ public:
 
 
 	/** Calc Suspension function used for simulated proxies	*/
-	UFUNCTION()
 	float CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData);
 
 	/** Handle to compute wheel ik
@@ -399,9 +397,6 @@ public:
 	void WheelsVisuals(FVector& FR, FVector& FL, FVector& RR, FVector& RL);
 
 protected:
-	// Reference to MMTPawn root component
-	UPROPERTY()
-	UPrimitiveComponent* PawnRootComponent;
 
 	FBodyInstance* RootBodyInstance;
 	static FBodyInstance* GetBodyInstance(UPrimitiveComponent* PrimitiveComponent);
@@ -412,8 +407,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	FVector LocalVelocity;
 	
-	UPROPERTY(BlueprintReadOnly)
-	float CurrentHorizontalSpeed;
+	/** 3D Speed scalar, the sign is based on whether the vehicle is navigating forwards or backwards */
+	UPROPERTY()
+	float CachedSpeedSized;
 
 	UPROPERTY(BlueprintReadOnly)
 	FVector CurrentAngularVelocity;
@@ -627,13 +623,13 @@ public:
 	UCurveFloat* EngineDecelerationCurve; 
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float TorqueSpeed;
+	float AirTorqueAcceleration;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	float AirTorqueSpeed;
+	float TorqueAcceleration;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "!bOrientRotationToMovementInAir"))
-	float AirStrafeSpeed;
+	float AirStrafeAcceleration;
 
 	/** Vehicle moving force. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)

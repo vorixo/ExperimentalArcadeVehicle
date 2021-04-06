@@ -226,6 +226,8 @@ enum class ESimplifiedDirection : uint8 {
 	Idle	= 0		UMETA(DisplayName = "Idle"),
 	Forward = 1		UMETA(DisplayName = "Forward Movement"),
 	Reverse = 2		UMETA(DisplayName = "Backwards Movement"),
+	Right	= 3		UMETA(DisplayName = "Right Movement"),
+	Left	= 4		UMETA(DisplayName = "Left Movement"),
 };
 
 
@@ -254,7 +256,7 @@ public:
 public:
 
 	/* Initialises the vehicle */
-	void InitVehicle();
+	virtual void InitVehicle();
 
 	/* Prepares the different curves of the vehicle */
 	void SetupVehicleCurves();
@@ -343,7 +345,7 @@ public:
 
 	/* Call this function whenever you want to initialise the vehicle (ie: after a recover from out of bounds... ect) */
 	UFUNCTION(BlueprintCallable)
-	void ResetVehicle();
+	virtual void ResetVehicle();
 
 	UFUNCTION(BlueprintPure)
 	bool GetStickyWheels() const;

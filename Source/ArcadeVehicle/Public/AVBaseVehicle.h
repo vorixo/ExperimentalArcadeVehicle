@@ -58,7 +58,7 @@ public:
 	float SusForce;
 
 	UPROPERTY()
-	FVector WheelWorldLocation;
+	FVector WheelRestingWorldLocation;
 
 	FSuspensionHitInfo() :
 		bWheelOnGround(false),
@@ -66,7 +66,7 @@ public:
 		GroundFriction(DEFAULT_GROUND_FRICTION),
 		GroundResistance(DEFAULT_GROUND_RESISTANCE),
 		SusForce(0.f),
-		WheelWorldLocation(FVector::ZeroVector)
+		WheelRestingWorldLocation(FVector::ZeroVector)
 	{
 
 	}
@@ -205,6 +205,36 @@ struct ARCADEVEHICLE_API FBasedPlatformInfo
 };
 
 
+USTRUCT(BlueprintType)
+struct ARCADEVEHICLE_API FWheelAnimationData
+{
+	GENERATED_USTRUCT_BODY()
+
+public:
+
+	UPROPERTY()
+	FVector2D WheelSpinningSpeed;
+	
+	UPROPERTY()
+	FVector2D WheelAngularPosition;
+	
+	UPROPERTY()
+	FVector2D WheelCurrentSteer;
+
+	UPROPERTY(EditDefaultsOnly)
+	FVector2D WheelMaxSteerAngle;
+	
+	FWheelAnimationData() :
+		WheelSpinningSpeed(FVector2D::ZeroVector),
+		WheelAngularPosition(FVector2D::ZeroVector),
+		WheelCurrentSteer(FVector2D::ZeroVector),
+		WheelMaxSteerAngle(FVector2D(35.f, 0.f))
+	{
+
+	}
+};
+
+
 UENUM(BlueprintType)
 enum class EBasedPlatformSetup : uint8 {
 	IgnoreBasedMovement		= 0		UMETA(DisplayName = "Ignore Based Movement"),
@@ -284,6 +314,12 @@ public:
 	**/
 	UFUNCTION()
 	virtual void ApplySuspensionForces(float DeltaTime);
+
+	/**
+	/*	Computes wheel rotation and steering
+	**/
+	UFUNCTION()
+	void SimulateWheelMovement(float DeltaTime);
 
 	/**
 	/*	Tracing function employed to compute the suspensions.
@@ -387,7 +423,7 @@ public:
 
 
 	/** Calc Suspension function used for simulated proxies	*/
-	float CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData);
+	FVector CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData);
 
 	/** Handle to compute wheel ik
 		- Simulated proxy: VFX + IK
@@ -396,7 +432,7 @@ public:
 		Y: Right wheel
 	*/
 	UFUNCTION(BlueprintCallable)
-	void WheelsVisuals(FVector& FR, FVector& FL, FVector& RR, FVector& RL);
+	void WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRotator& FLR, FVector& RR, FRotator& RRR, FVector& RL, FRotator& RLR);
 
 protected:
 
@@ -527,6 +563,10 @@ protected:
 	/* Is the vehicle being flipped? */
 	UPROPERTY(BlueprintReadOnly)
 	bool bFlipping;
+
+	/* Animation data for the wheels */
+	UPROPERTY(EditDefaultsOnly)
+	FWheelAnimationData WheelAnimData;
 
 	/** 1: Max influence 0: Min Influence **/
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, meta = (EditCondition = "bOrientRotationToMovementInAir", ClampMin = "0.0", UIMin = "0.0", ClampMax = "1.0", UIMax = "1.0"))

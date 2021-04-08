@@ -236,8 +236,11 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	// Input processing
 	ApplyInputStack(SubstepDeltaTime);
 
-
+	// Suspension and friction forces
 	ApplySuspensionForces(SubstepDeltaTime);
+
+	// Simulate wheel animation 
+	SimulateWheelMovement(SubstepDeltaTime);
 
 	/************************************************************************/
 	/* Apply gravity and sliding forces                                     */
@@ -407,14 +410,14 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 	{
 		auto& Susp = CachedSuspensionInfo[SpringIdx];
 
-		const FVector WheelWorldLocation = RGWorldTransform.TransformPosition(Susp.WheelRelativeLocation);
-		const FVector TraceStart = WheelWorldLocation + RGUpVector * (Susp.SuspensionData.SuspensionMaxRaise);
-		const FVector TraceEnd = WheelWorldLocation - RGUpVector * (GroundDetectionDistanceThreshold);
+		const FVector WheelRestingWorldLocation = RGWorldTransform.TransformPosition(Susp.WheelRelativeLocation);
+		const FVector TraceStart = WheelRestingWorldLocation + RGUpVector * Susp.SuspensionData.SuspensionMaxRaise;
+		const FVector TraceEnd = WheelRestingWorldLocation - RGUpVector * (GroundDetectionDistanceThreshold);
 		const float TraceFullLength = Susp.SuspensionLength + Susp.SuspensionData.WheelRadius;
 
 		auto& sHitInfo = HitInfos[SpringIdx];
 
-		sHitInfo.WheelWorldLocation = WheelWorldLocation;
+		sHitInfo.WheelRestingWorldLocation = WheelRestingWorldLocation;
 		Susp.DisplacementInput = TraceFullLength - Susp.SuspensionData.WheelRadius;
 
 		FHitResult OutHit;
@@ -430,11 +433,12 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 					DrawDebugSweptBox(GetWorld(), TraceStart, TraceStart - (RGUpVector * TraceFullLength), RGWorldTransform.GetRotation(),
 						FVector(Susp.SuspensionData.TraceHalfSize.X, Susp.SuspensionData.TraceHalfSize.Y, 0.f), EDrawDebugTrace::ForOneFrame, Susp.LastDisplacement > 0.f ? FColor::Blue : FColor::Red, false, 0.f);
 
-					const FVector RealWheelLocation = TraceStart - (RGUpVector * Susp.LastDisplacement);
-					UKismetSystemLibrary::DrawDebugCylinder(this, RealWheelLocation + (RGRightVector * Susp.SuspensionData.TraceHalfSize.X), RealWheelLocation - (RGRightVector * Susp.SuspensionData.TraceHalfSize.X),
+					const FVector WheelWorldLocation = TraceStart - (RGUpVector * Susp.LastDisplacement);
+
+					UKismetSystemLibrary::DrawDebugCylinder(this, WheelWorldLocation + (RGRightVector * (Susp.SuspensionData.TraceHalfSize.X/2)), WheelWorldLocation - (RGRightVector * (Susp.SuspensionData.TraceHalfSize.X/2)),
 						Susp.SuspensionData.WheelRadius, 12, FLinearColor::White, 0.f);
 
-					UKismetSystemLibrary::DrawDebugCylinder(this, WheelWorldLocation + (RGRightVector * Susp.SuspensionData.TraceHalfSize.X), WheelWorldLocation - (RGRightVector * Susp.SuspensionData.TraceHalfSize.X),
+					UKismetSystemLibrary::DrawDebugCylinder(this, WheelRestingWorldLocation + (RGRightVector * (Susp.SuspensionData.TraceHalfSize.X/2)), WheelRestingWorldLocation - (RGRightVector * (Susp.SuspensionData.TraceHalfSize.X/2)),
 						Susp.SuspensionData.WheelRadius, 12, FLinearColor::Black, 0.f);
 				}
 			}
@@ -444,11 +448,10 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 			{
 				Susp.DisplacementInput = OutHit.Distance - Susp.SuspensionData.WheelRadius;
 				const float ForceMagnitude = GetSuspensionForceMagnitude(Susp, DeltaTime);
-				Susp.LastDisplacement = Susp.DisplacementInput;
 
 				const FVector FinalForce = (OutHit.ImpactNormal * ForceMagnitude);
 
-				RootBodyInstance->AddForceAtPosition(FinalForce, WheelWorldLocation, false);
+				RootBodyInstance->AddForceAtPosition(FinalForce, WheelRestingWorldLocation, false);
 				
 				// Storing resting force for axle calculus later
 				sHitInfo.SusForce = Susp.SuspensionData.SuspensionLoadRatio * ForceMagnitude + (1.f - Susp.SuspensionData.SuspensionLoadRatio) * Susp.RestingForce;
@@ -464,6 +467,7 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 			sHitInfo.bTraceHit = true;
 			Susp.ImpactNormal = OutHit.ImpactNormal;
 		}
+		Susp.LastDisplacement = Susp.DisplacementInput;
 	}
 	
 	// Compute axle load balancing forces
@@ -479,8 +483,8 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 			const FVector ForceVector0 = RGUpVector * ForceDiffOnAxleF * RollbarScaling;
 			const FVector ForceVector1 = RGUpVector * ForceDiffOnAxleF * -RollbarScaling;
 
-			RootBodyInstance->AddForceAtPosition(ForceVector0, HitInfos[WheelIdxA].WheelWorldLocation, false);
-			RootBodyInstance->AddForceAtPosition(ForceVector1, HitInfos[WheelIdxB].WheelWorldLocation, false);
+			RootBodyInstance->AddForceAtPosition(ForceVector0, HitInfos[WheelIdxA].WheelRestingWorldLocation, false);
+			RootBodyInstance->AddForceAtPosition(ForceVector1, HitInfos[WheelIdxB].WheelRestingWorldLocation, false);
 		}
 	}
 
@@ -501,6 +505,19 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 	{
 		Landed(AvgedNormals);
 	}
+}
+
+
+void AAVBaseVehicle::SimulateWheelMovement(float DeltaTime)
+{
+	const float GroundOmegaX = LocalVelocity.X / CachedSuspensionInfo[FRONT_LEFT].SuspensionData.WheelRadius;
+	WheelAnimData.WheelSpinningSpeed.X += (GroundOmegaX - WheelAnimData.WheelSpinningSpeed.X);
+	const float GroundOmegaY = LocalVelocity.X / CachedSuspensionInfo[BACK_LEFT].SuspensionData.WheelRadius;
+	WheelAnimData.WheelSpinningSpeed.Y += (GroundOmegaY - WheelAnimData.WheelSpinningSpeed.Y);
+	WheelAnimData.WheelAngularPosition.X -= WheelAnimData.WheelSpinningSpeed.X * DeltaTime;
+	WheelAnimData.WheelAngularPosition.Y -= WheelAnimData.WheelSpinningSpeed.Y * DeltaTime;
+	WheelAnimData.WheelCurrentSteer.X = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.X, CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.X, DeltaTime, 10.f);
+	WheelAnimData.WheelCurrentSteer.Y = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.Y, CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.Y, DeltaTime, 10.f);
 }
 
 
@@ -755,7 +772,8 @@ void AAVBaseVehicle::SetBoosting(bool inBoost)
 
 void AAVBaseVehicle::ResetVehicle()
 {
-	LastTimeGearSwapped = -100.f; // We initialise this variable at a very low value to skip the gear ready delay when the kart starts moving without a defined gear
+	LastTimeGearSwapped = -100.f; // We initialize this variable at a very low value to skip the gear ready delay when the kart starts moving without a defined gear
+	WheelAnimData = FWheelAnimationData();
 	TimeFalling = 0.f;
 	SetBoosting(false);
 	AccelerationAccumulatedTime = 0.f;
@@ -895,41 +913,56 @@ bool AAVBaseVehicle::KartBallisticPrediction(
 }
 
 
-float AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData)
+FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, const FSuspensionData& SuspensionData)
 {
 #if WITH_EDITOR
 	ensureMsgf(!IsLocallyControlled(), TEXT("CalcSuspensionSimulatedProxy cannot be called from Locally Controlled Clients."));
 #endif
+
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
-	const FVector TraceStart = RGWorldTransform.TransformPositionNoScale(RelativeOffset);
-	const FVector TraceEnd = TraceStart - (RGWorldTransform.GetUnitAxis(EAxis::Z) * (GroundDetectionDistanceThreshold));
-	const float TraceFullLength = SuspensionData.SuspensionMaxDrop + SuspensionData.SuspensionMaxRaise + SuspensionData.WheelRadius;
+	const float SuspensionLength = SuspensionData.SuspensionMaxDrop + SuspensionData.SuspensionMaxRaise;
+	const FVector WheelRestingWorldLocation = RGWorldTransform.TransformPosition(RelativeOffset);
+	const FVector TraceStart = WheelRestingWorldLocation + RGUpVector * SuspensionData.SuspensionMaxRaise;
+	const FVector TraceEnd = WheelRestingWorldLocation - RGUpVector * (GroundDetectionDistanceThreshold);
+	const float TraceFullLength = SuspensionLength + SuspensionData.WheelRadius;
+
+	float Displacement = TraceFullLength - SuspensionData.WheelRadius;
+
 	FHitResult OutHit;
 
 	if (TraceFunc(TraceStart, TraceEnd, SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
 	{
-		return FMath::Min(OutHit.Distance, TraceFullLength);
+		Displacement = FMath::Min(OutHit.Distance, TraceFullLength) - SuspensionData.WheelRadius;
 	}
 
-	return TraceFullLength;
+	const FVector RealWheelWorldLocation = TraceStart - (RGUpVector * Displacement);
+
+	return RealWheelWorldLocation;
 }
 
 
-void AAVBaseVehicle::WheelsVisuals(FVector& FR, FVector& FL, FVector& RR, FVector& RL)
+void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRotator& FLR, FVector& RR, FRotator& RRR, FVector& RL, FRotator& RLR)
 {
 	if (IsLocallyControlled())
 	{
-		FL = FVector(FrontLeft.X, FrontLeft.Y, ((FrontLeft.Z + SuspensionFront.SuspensionMaxRaise) - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput));
-		FR = FVector(FrontRight.X, FrontRight.Y, ((FrontRight.Z + SuspensionFront.SuspensionMaxRaise) - CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput));
-		RL = FVector(BackLeft.X, BackLeft.Y, ((BackLeft.Z + SuspensionRear.SuspensionMaxRaise) - CachedSuspensionInfo[BACK_LEFT].DisplacementInput));
-		RR = FVector(BackRight.X, BackRight.Y, ((BackRight.Z + SuspensionRear.SuspensionMaxRaise) - CachedSuspensionInfo[BACK_RIGHT].DisplacementInput));
+		// Wheel IK
+		FL = FVector(0, 0, CachedSuspensionInfo[FRONT_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
+		FR = FVector(0, 0, CachedSuspensionInfo[FRONT_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput);
+		RL = FVector(0, 0, CachedSuspensionInfo[BACK_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_LEFT].DisplacementInput);
+		RR = FVector(0, 0, CachedSuspensionInfo[BACK_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_RIGHT].DisplacementInput);
+
+		// Wheel Spin and Steer
+		FLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.X), WheelAnimData.WheelCurrentSteer.X, 0.f);
+		FRR = FLR;
+		RLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.Y), WheelAnimData.WheelCurrentSteer.Y, 0.f);
+		RRR = RLR;
 	}
 	else
 	{
-		FL = FVector(FrontLeft.X, FrontLeft.Y, ((FrontLeft.Z + SuspensionFront.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront)));
-		FR = FVector(FrontRight.X, FrontRight.Y, ((FrontRight.Z + SuspensionFront.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront)));
-		RL = FVector(BackLeft.X, BackLeft.Y, ((BackLeft.Z + SuspensionRear.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear)));
-		RR = FVector(BackRight.X, BackRight.Y, ((BackRight.Z + SuspensionRear.SuspensionMaxRaise) - CalcSuspensionSimulatedProxy(BackRight, SuspensionRear)));
+		FL =  CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront);
+		FR =  CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront);
+		RL =  CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear);
+		RR =  CalcSuspensionSimulatedProxy(BackRight, SuspensionRear);
 	}
 }
 

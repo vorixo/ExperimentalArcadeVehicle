@@ -939,7 +939,7 @@ FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, con
 		Displacement = FMath::Min(OutHit.Distance, TraceFullLength) - SuspensionData.WheelRadius;
 	}
 
-	return FVector(0, 0, SuspensionData.SuspensionMaxRaise - Displacement);
+	return RGUpVector * (SuspensionData.SuspensionMaxRaise - Displacement);
 }
 
 
@@ -948,10 +948,10 @@ void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRot
 	if (IsLocallyControlled())
 	{
 		// Wheel IK
-		FL = FVector(0, 0, CachedSuspensionInfo[FRONT_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
-		FR = FVector(0, 0, CachedSuspensionInfo[FRONT_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput);
-		RL = FVector(0, 0, CachedSuspensionInfo[BACK_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_LEFT].DisplacementInput);
-		RR = FVector(0, 0, CachedSuspensionInfo[BACK_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_RIGHT].DisplacementInput);
+		FL = RGUpVector * (CachedSuspensionInfo[FRONT_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
+		FR = RGUpVector * (CachedSuspensionInfo[FRONT_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_RIGHT].DisplacementInput);
+		RL = RGUpVector * (CachedSuspensionInfo[BACK_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_LEFT].DisplacementInput);
+		RR = RGUpVector * (CachedSuspensionInfo[BACK_RIGHT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[BACK_RIGHT].DisplacementInput);
 
 		// Wheel Spin and Steer
 		FLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.X), WheelAnimData.WheelCurrentSteer.X, 0.f);

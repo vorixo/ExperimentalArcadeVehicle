@@ -228,7 +228,7 @@ public:
 		WheelSpinningSpeed(FVector2D::ZeroVector),
 		WheelAngularPosition(FVector2D::ZeroVector),
 		WheelCurrentSteer(FVector2D::ZeroVector),
-		WheelMaxSteerAngle(FVector2D(35.f, 0.f))
+		WheelMaxSteerAngle(FVector2D(25.f, 0.f))
 	{
 
 	}
@@ -319,7 +319,7 @@ public:
 	/*	Computes wheel rotation and steering
 	**/
 	UFUNCTION()
-	void SimulateWheelMovement(float DeltaTime);
+	virtual void SimulateWheelMovement(float DeltaTime);
 
 	/**
 	/*	Tracing function employed to compute the suspensions.

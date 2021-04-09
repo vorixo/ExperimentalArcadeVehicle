@@ -510,14 +510,16 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 
 void AAVBaseVehicle::SimulateWheelMovement(float DeltaTime)
 {
+	// Front wheels
 	const float GroundOmegaX = LocalVelocity.X / CachedSuspensionInfo[FRONT_LEFT].SuspensionData.WheelRadius;
 	WheelAnimData.WheelSpinningSpeed.X += (GroundOmegaX - WheelAnimData.WheelSpinningSpeed.X);
+	WheelAnimData.WheelAngularPosition.X -= WheelAnimData.WheelSpinningSpeed.X * DeltaTime;
+	WheelAnimData.WheelCurrentSteer.X = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.X, CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.X, DeltaTime, 10.f);
+	// Rear wheels
 	const float GroundOmegaY = LocalVelocity.X / CachedSuspensionInfo[BACK_LEFT].SuspensionData.WheelRadius;
 	WheelAnimData.WheelSpinningSpeed.Y += (GroundOmegaY - WheelAnimData.WheelSpinningSpeed.Y);
-	WheelAnimData.WheelAngularPosition.X -= WheelAnimData.WheelSpinningSpeed.X * DeltaTime;
 	WheelAnimData.WheelAngularPosition.Y -= WheelAnimData.WheelSpinningSpeed.Y * DeltaTime;
-	WheelAnimData.WheelCurrentSteer.X = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.X, CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.X, DeltaTime, 10.f);
-	WheelAnimData.WheelCurrentSteer.Y = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.Y, CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.Y, DeltaTime, 10.f);
+	WheelAnimData.WheelCurrentSteer.Y = FMath::FInterpTo(WheelAnimData.WheelCurrentSteer.Y, -CurrentSteeringAxis * WheelAnimData.WheelMaxSteerAngle.Y, DeltaTime, 10.f);
 }
 
 
@@ -694,8 +696,10 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 		}
 		else
 		{
-			const float TargetSteerSpeed = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(FMath::Abs(LocalVelocity.X)) : 1.f;
-			if (FMath::Abs(CurrentAngularSpeed) <= TargetSteerSpeed)
+			// Removing error to compute the steering (therefore expected 0.f is 0.f and not 0.0001)
+			const float ApproximateForwardVelocity = FMath::FloorToFloat(FMath::Abs(LocalVelocity.X));
+			const float TargetSteerSpeed = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(ApproximateForwardVelocity) : 1.f;
+			if (FMath::Abs(CurrentAngularSpeed) < TargetSteerSpeed)
 			{
 				SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * TorqueAcceleration;
 			}
@@ -918,8 +922,8 @@ FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, con
 #if WITH_EDITOR
 	ensureMsgf(!IsLocallyControlled(), TEXT("CalcSuspensionSimulatedProxy cannot be called from Locally Controlled Clients."));
 #endif
-
 	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
+	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
 	const float SuspensionLength = SuspensionData.SuspensionMaxDrop + SuspensionData.SuspensionMaxRaise;
 	const FVector WheelRestingWorldLocation = RGWorldTransform.TransformPosition(RelativeOffset);
 	const FVector TraceStart = WheelRestingWorldLocation + RGUpVector * SuspensionData.SuspensionMaxRaise;
@@ -935,9 +939,7 @@ FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, con
 		Displacement = FMath::Min(OutHit.Distance, TraceFullLength) - SuspensionData.WheelRadius;
 	}
 
-	const FVector RealWheelWorldLocation = TraceStart - (RGUpVector * Displacement);
-
-	return RealWheelWorldLocation;
+	return FVector(0, 0, SuspensionData.SuspensionMaxRaise - Displacement);
 }
 
 

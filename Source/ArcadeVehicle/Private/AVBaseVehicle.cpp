@@ -204,7 +204,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (Settings && GetWorld()->GetTimeSeconds() > 5.f)
 	{
 		const float RequiredSteps = GetWorld()->GetDeltaSeconds() / Settings->MaxSubstepDeltaTime;
-		if (!ensure(RequiredSteps <= Settings->MaxSubsteps))
+		if (bDebugInfo && !ensure(RequiredSteps <= Settings->MaxSubsteps))
 		{
 			const FString SimulationMessage = FString::Printf(TEXT("The simulation requires more steps to be representative at the current Delta Time. Consider increasing MaxSubsteps if you desire MaxSubstepDeltaTime precision. Required Steps: %d"), FMath::CeilToInt(RequiredSteps));
 			PRINT_TICK(SimulationMessage);

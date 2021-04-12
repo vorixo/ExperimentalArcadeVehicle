@@ -419,6 +419,8 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 
 		sHitInfo.WheelRestingWorldLocation = WheelRestingWorldLocation;
 		Susp.DisplacementInput = TraceFullLength - Susp.SuspensionData.WheelRadius;
+		Susp.bWheelOnGround = false;
+		Susp.PhysMat = NULL;
 
 		FHitResult OutHit;
 		if (TraceFunc(TraceStart, TraceEnd, Susp.SuspensionData.TraceHalfSize, bDebugInfo > 0 ? EDrawDebugTrace::ForOneFrame : EDrawDebugTrace::None, OutHit))
@@ -444,7 +446,9 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 			}
 			#endif
 
-			if (OutHit.Distance <= TraceFullLength)
+			Susp.bWheelOnGround = (OutHit.Distance <= TraceFullLength);
+			
+			if (Susp.bWheelOnGround)
 			{
 				Susp.DisplacementInput = OutHit.Distance - Susp.SuspensionData.WheelRadius;
 				const float ForceMagnitude = GetSuspensionForceMagnitude(Susp, DeltaTime);
@@ -456,11 +460,9 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 				// Storing resting force for axle calculus later
 				sHitInfo.SusForce = Susp.SuspensionData.SuspensionLoadRatio * ForceMagnitude + (1.f - Susp.SuspensionData.SuspensionLoadRatio) * Susp.RestingForce;
 
-				// Trace hits and it is within the suspension length size, hence the wheel is on the ground
-				sHitInfo.bWheelOnGround = true;
-
 				// Physical material properties for this wheel contacting the ground
 				const bool bPhysMatExists = OutHit.PhysMaterial.IsValid();
+				Susp.PhysMat = OutHit.PhysMaterial;
 				sHitInfo.GroundFriction = bPhysMatExists ? OutHit.PhysMaterial->Friction : DEFAULT_GROUND_FRICTION;
 				sHitInfo.GroundResistance = bPhysMatExists ? OutHit.PhysMaterial->Density : DEFAULT_GROUND_RESISTANCE;
 			}
@@ -491,7 +493,7 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 	// On landing impl. If in the previous step it was in the air and now is in the ground 
 	const bool bWasMovingOnGround = bIsMovingOnGround;
 
-	const uint8 WheelsTouchingTheGround = (HitInfos[FRONT_LEFT].bWheelOnGround + HitInfos[FRONT_RIGHT].bWheelOnGround + HitInfos[BACK_LEFT].bWheelOnGround + HitInfos[BACK_RIGHT].bWheelOnGround);
+	const uint8 WheelsTouchingTheGround = (CachedSuspensionInfo[FRONT_LEFT].bWheelOnGround + CachedSuspensionInfo[FRONT_RIGHT].bWheelOnGround + CachedSuspensionInfo[BACK_LEFT].bWheelOnGround + CachedSuspensionInfo[BACK_RIGHT].bWheelOnGround);
 	bIsMovingOnGround = WheelsTouchingTheGround > 2;
 	bCompletelyInTheAir = WheelsTouchingTheGround == 0;
 	bCompletelyInTheGround = WheelsTouchingTheGround == NUMBER_OF_WHEELS;

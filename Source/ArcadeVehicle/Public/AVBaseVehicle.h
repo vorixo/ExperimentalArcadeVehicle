@@ -43,9 +43,6 @@ struct ARCADEVEHICLE_API FSuspensionHitInfo
 public:
 
 	UPROPERTY()
-	uint8 bWheelOnGround : 1;
-
-	UPROPERTY()
 	uint8 bTraceHit : 1;
 
 	UPROPERTY()
@@ -61,7 +58,6 @@ public:
 	FVector WheelRestingWorldLocation;
 
 	FSuspensionHitInfo() :
-		bWheelOnGround(false),
 		bTraceHit(false),
 		GroundFriction(DEFAULT_GROUND_FRICTION),
 		GroundResistance(DEFAULT_GROUND_RESISTANCE),
@@ -169,6 +165,12 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	float SuspensionLength;
 
+	UPROPERTY(BlueprintReadOnly)
+	uint8 bWheelOnGround : 1;
+
+	UPROPERTY()
+	TWeakObjectPtr<class UPhysicalMaterial> PhysMat;
+
 	FCachedSuspensionInfo() :
 		ImpactNormal(FVector::ZeroVector),
 		WheelRelativeLocation(FVector::ZeroVector),
@@ -178,7 +180,9 @@ public:
 		RestingForce(0.f),
 		DisplacementInput(0.f),
 		LastDisplacement(0.f),
-		SuspensionLength(0.f)
+		SuspensionLength(0.f),
+		bWheelOnGround(false),
+		PhysMat(NULL)
 	{
 
 	}

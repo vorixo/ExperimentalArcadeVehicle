@@ -74,6 +74,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	InfluencialDirection = 0.f;
 	bIsGearReady = true;
 	AirNavigationMode = EAirNavigationMode::None;
+	AirNavigationAdaptativeForce = 25.f;
 	LastUsedGear = ESimplifiedDirection::Idle;
 	LastUsedGroundGear = ESimplifiedDirection::Idle;
 	bFlipping = false;
@@ -85,6 +86,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	{
 		CollisionMesh->SetSimulatePhysics(true);
 		CollisionMesh->BodyInstance.bOverrideMass = true;
+		// Important: The physics setup is modelled to work with vehicles with mass surrounding 1.3 KG
 		CollisionMesh->BodyInstance.SetMassOverride(1.3f);
 		CollisionMesh->SetEnableGravity(false);
 		CollisionMesh->bReplicatePhysicsToAutonomousProxy = false;
@@ -843,8 +845,8 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 		{
 			bFlipping = (FinalDotProductVehicle < -0.3f);
 		}
-
-		const float AntiRollMagnitude = bFlipping ? 250.f : 25.f;
+		// If we are flipping we apply a string torque force, otherwise we let the user select.
+		const float AntiRollMagnitude = bFlipping ? 250.f : AirNavigationAdaptativeForce;
 		const FVector AntiRollForce = FVector::CrossProduct(TargetUpVector, -RGUpVector) * AntiRollMagnitude;
 		SteeringForce += AntiRollForce;
 	}

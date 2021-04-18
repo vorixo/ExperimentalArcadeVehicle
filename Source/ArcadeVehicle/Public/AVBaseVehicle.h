@@ -639,6 +639,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EAirNavigationMode AirNavigationMode;
 
+	/** Force applied to orient the vehicle to the desired surface determined by AirNavigationMode. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	float AirNavigationAdaptativeForce;
+
 	/** "Down" force to apply while in the ground. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float GravityAir;

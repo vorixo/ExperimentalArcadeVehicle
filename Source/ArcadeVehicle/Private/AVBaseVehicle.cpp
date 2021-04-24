@@ -91,7 +91,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 		CollisionMesh->SetEnableGravity(false);
 		CollisionMesh->bReplicatePhysicsToAutonomousProxy = false;
 		CollisionMesh->BodyInstance.COMNudge = FVector(0.f, 0.f, -20.f);
-		CollisionMesh->SetCollisionProfileName(UCollisionProfile::PhysicsActor_ProfileName);
+		CollisionMesh->SetCollisionProfileName(UCollisionProfile::Vehicle_ProfileName);
 		RootComponent = CollisionMesh;
 	}
 	

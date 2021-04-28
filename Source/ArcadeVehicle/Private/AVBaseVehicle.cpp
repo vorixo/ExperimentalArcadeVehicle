@@ -79,20 +79,21 @@ AAVBaseVehicle::AAVBaseVehicle()
 	LastUsedGroundGear = ESimplifiedDirection::Idle;
 	bFlipping = false;
 	bComputeAxleForces = false;
+	bComputePhysicsSimulatedProxy = true;
 	ResetVehicle();
 
-	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
-	if (CollisionMesh)
+	VehicleMesh = CreateDefaultSubobject<USkeletalMeshComponent>("VehicleMesh");
+	if (VehicleMesh)
 	{
-		CollisionMesh->SetSimulatePhysics(true);
-		CollisionMesh->BodyInstance.bOverrideMass = true;
+		VehicleMesh->SetSimulatePhysics(true);
+		VehicleMesh->BodyInstance.bOverrideMass = true;
 		// Important: The physics setup is modelled to work with vehicles with mass surrounding 1.3 KG
-		CollisionMesh->BodyInstance.SetMassOverride(1.3f);
-		CollisionMesh->SetEnableGravity(false);
-		CollisionMesh->bReplicatePhysicsToAutonomousProxy = false;
-		CollisionMesh->BodyInstance.COMNudge = FVector(0.f, 0.f, -20.f);
-		CollisionMesh->SetCollisionProfileName(UCollisionProfile::Vehicle_ProfileName);
-		RootComponent = CollisionMesh;
+		VehicleMesh->BodyInstance.SetMassOverride(1.3f);
+		VehicleMesh->SetEnableGravity(false);
+		VehicleMesh->bReplicatePhysicsToAutonomousProxy = false;
+		VehicleMesh->BodyInstance.COMNudge = FVector(0.f, 0.f, -20.f);
+		VehicleMesh->SetCollisionProfileName(UCollisionProfile::Vehicle_ProfileName);
+		RootComponent = VehicleMesh;
 	}
 	
 	// Component instanciation
@@ -116,10 +117,10 @@ AAVBaseVehicle::AAVBaseVehicle()
 		FrontLeftHandle->SetStaticMesh(CylinderHelpMesh.Object);
 		BackLeftHandle->SetStaticMesh(CylinderHelpMesh.Object);
 		
-		BackRightHandle->SetupAttachment(CollisionMesh);
-		FrontRightHandle->SetupAttachment(CollisionMesh);
-		FrontLeftHandle->SetupAttachment(CollisionMesh);
-		BackLeftHandle->SetupAttachment(CollisionMesh);
+		BackRightHandle->SetupAttachment(VehicleMesh);
+		FrontRightHandle->SetupAttachment(VehicleMesh);
+		FrontLeftHandle->SetupAttachment(VehicleMesh);
+		BackLeftHandle->SetupAttachment(VehicleMesh);
 		
 		BackRightHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		FrontRightHandle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -130,6 +131,13 @@ AAVBaseVehicle::AAVBaseVehicle()
 	}
 #endif //WITH_EDITOR
 
+
+	// Identified issues using skel mesh as the root:
+	// - Visual changes on the skeletal mesh affect the physics model (changing the scale in the runtime will modify how physics behave) 
+	// - Letting the user setup the physics asset is dangerous. But would say it's fine.
+	// - Kinematic objects overrides scale for bounded sockets: See https://answers.unrealengine.com/questions/986251/kinematic-overrides-scale-of-skeletal-meshes.html
+	// - For some reason anim bp runtime rotation transforms only rotates the wheels.
+	// Advantages: Using the physics asset. + less stress on the hierarchical chain. For that reason these modifications are included in a branch.
 }
 
 
@@ -172,7 +180,7 @@ void AAVBaseVehicle::BeginPlay()
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 
 		UWorld* World = GetWorld();
-		if (World->IsGameWorld() && IsLocallyControlled())
+		if (World->IsGameWorld() && (IsLocallyControlled() || bComputePhysicsSimulatedProxy))
 		{
 			FPhysScene* PScene = World->GetPhysicsScene();
 			if (PScene)
@@ -365,6 +373,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 
 	if (bDebugInfo > 0)
 	{
+		PRINT_TICK(GetOffsetedCenterOfVehicle().ToString());
 		UKismetSystemLibrary::DrawDebugSphere(this, GetOffsetedCenterOfVehicle(), 10.f, 12);
 		UKismetSystemLibrary::DrawDebugSphere(this, RGLocation, 10.f, 12);
 		UKismetSystemLibrary::DrawDebugString(this, RGLocation, FString::SanitizeFloat(LocalVelocity.X).Mid(0, 5), NULL,FLinearColor::Red);
@@ -949,7 +958,7 @@ FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, con
 
 void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRotator& FLR, FVector& RR, FRotator& RRR, FVector& RL, FRotator& RLR)
 {
-	if (IsLocallyControlled())
+	if (CachedSuspensionInfo.Num() == NUMBER_OF_WHEELS)
 	{
 		// Wheel IK
 		FL = RGUpVector * (CachedSuspensionInfo[FRONT_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
@@ -963,8 +972,9 @@ void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRot
 		RLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.Y), WheelAnimData.WheelCurrentSteer.Y, 0.f);
 		RRR = RLR;
 	}
-	else
+	else if(GetWorld()->IsGameWorld())
 	{
+		// Only useful when simulated proxies don't calculate physics
 		FL =  CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront);
 		FR =  CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront);
 		RL =  CalcSuspensionSimulatedProxy(BackLeft, SuspensionRear);
@@ -1035,13 +1045,13 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 void AAVBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
 {
 	Super::PreSave(TargetPlatform);
-	BackRight = BackRightHandle->GetRelativeLocation();
-	FrontRight = FrontRightHandle->GetRelativeLocation();
-	FrontLeft = FrontLeftHandle->GetRelativeLocation();
-	BackLeft = BackLeftHandle->GetRelativeLocation();
-	
-	// Ensure values in the CDO are correct
-	UpdateHandlersTransformCDO();
+
+	const FTransform RootRelativeTransform = VehicleMesh->GetBoneTransform(0, FTransform::Identity);
+
+	BackRight = RootRelativeTransform.InverseTransformPosition(BackRightHandle->GetRelativeLocation());
+	FrontRight = RootRelativeTransform.InverseTransformPosition(FrontRightHandle->GetRelativeLocation());
+	FrontLeft = RootRelativeTransform.InverseTransformPosition(FrontLeftHandle->GetRelativeLocation());
+	BackLeft = RootRelativeTransform.InverseTransformPosition(BackLeftHandle->GetRelativeLocation());
 }
 
 
@@ -1058,6 +1068,9 @@ void AAVBaseVehicle::OnConstruction(const FTransform& Transform)
 	FrontRightHandle->SetRelativeRotation(FRotator::ZeroRotator);
 	FrontLeftHandle->SetRelativeRotation(FRotator::ZeroRotator);
 	BackLeftHandle->SetRelativeRotation(FRotator::ZeroRotator);
+
+	// Vehicle cannot be scaled
+	VehicleMesh->SetRelativeScale3D(FVector::OneVector);
 }
 
 

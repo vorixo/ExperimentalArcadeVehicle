@@ -588,6 +588,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool bComputeAxleForces;
 
+	/** Computes the full physics stack on simulated proxies: More computing intensive for networked games. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	bool bComputePhysicsSimulatedProxy;
+
 public:
 
 #if WITH_EDITOR
@@ -610,7 +614,7 @@ public:
 #endif
 
 	UPROPERTY(Category = HoverComponent, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
-	UStaticMeshComponent* CollisionMesh;
+	USkeletalMeshComponent* VehicleMesh;
 
 	// Hoover/Wheel resting point position
 	UPROPERTY(BlueprintReadOnly)

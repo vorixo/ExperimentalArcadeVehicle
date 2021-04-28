@@ -588,6 +588,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	bool bComputeAxleForces;
 
+	/** Computes the full physics stack on simulated proxies: More computing intensive for networked games. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	bool bComputePhysicsSimulatedProxy;
+
 public:
 
 #if WITH_EDITOR

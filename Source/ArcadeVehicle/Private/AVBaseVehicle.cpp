@@ -79,6 +79,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	LastUsedGroundGear = ESimplifiedDirection::Idle;
 	bFlipping = false;
 	bComputeAxleForces = false;
+	bComputePhysicsSimulatedProxy = true;
 	ResetVehicle();
 
 	CollisionMesh = CreateDefaultSubobject<UStaticMeshComponent>("CollisionMesh");
@@ -172,7 +173,7 @@ void AAVBaseVehicle::BeginPlay()
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
 
 		UWorld* World = GetWorld();
-		if (World->IsGameWorld() && IsLocallyControlled())
+		if (World->IsGameWorld() && (IsLocallyControlled() || bComputePhysicsSimulatedProxy))
 		{
 			FPhysScene* PScene = World->GetPhysicsScene();
 			if (PScene)
@@ -949,7 +950,7 @@ FVector AAVBaseVehicle::CalcSuspensionSimulatedProxy(FVector RelativeOffset, con
 
 void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRotator& FLR, FVector& RR, FRotator& RRR, FVector& RL, FRotator& RLR)
 {
-	if (IsLocallyControlled())
+	if (CachedSuspensionInfo.Num() == NUMBER_OF_WHEELS)
 	{
 		// Wheel IK
 		FL = RGUpVector * (CachedSuspensionInfo[FRONT_LEFT].SuspensionData.SuspensionMaxRaise - CachedSuspensionInfo[FRONT_LEFT].DisplacementInput);
@@ -963,7 +964,7 @@ void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRot
 		RLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.Y), WheelAnimData.WheelCurrentSteer.Y, 0.f);
 		RRR = RLR;
 	}
-	else
+	else if (GetWorld()->IsGameWorld())
 	{
 		FL =  CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront);
 		FR =  CalcSuspensionSimulatedProxy(FrontRight, SuspensionFront);

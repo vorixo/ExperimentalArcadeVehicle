@@ -337,13 +337,13 @@ public:
 	UFUNCTION(BlueprintPure)
 	FVector GetOffsetedCenterOfVehicle() const;
 
-	UFUNCTION()
+	UFUNCTION(BlueprintCallable)
 	void SetThrottleInput(float InputAxis);
 
-	UFUNCTION()
+	UFUNCTION(BlueprintCallable)
 	void SetSteeringInput(float InputAxis);
 
-	UFUNCTION()
+	UFUNCTION(BlueprintCallable)
 	void SetBrakeInput(float InputAxis);
 
 	void ApplyInputStack(float DeltaTime);
@@ -362,7 +362,7 @@ public:
 
 	/** Gets you whatever max speed is being used in absolute value */
 	UFUNCTION(BlueprintPure)
-	float GetAbsMaxSpeedAxisIndependent() const;
+	virtual float GetAbsMaxSpeedAxisIndependent() const;
 
 	/** Computes the current forward speed based on the acceleration curve */
 	UFUNCTION(BlueprintPure)

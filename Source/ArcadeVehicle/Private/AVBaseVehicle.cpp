@@ -665,11 +665,11 @@ void AAVBaseVehicle::ApplyThrottleInput(float DeltaTime)
 	if ((CurrentThrottleAxis >= 0.1f && bIsGearReady) || bIsBoosting)
 	{
 		AccelerationAccumulatedTime += DeltaTime;
-		if (LocalVelocity.X <= GetComputedSpeed() && bIsMovingOnGround)
+		const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
+		if (LocalVelocity.X <= (GetComputedSpeed() * MaxThrottleRatio) && bIsMovingOnGround)
 		{
-			const float MaxThrottleRatio = bIsBoosting ? 1.f : CurrentThrottleAxis;
-			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration() * MaxThrottleRatio;
-		}
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * getAcceleration();
+		}		
 	}
 }
 
@@ -680,9 +680,9 @@ void AAVBaseVehicle::ApplyReverseInput(float DeltaTime)
 	if (CurrentBrakeAxis <= -0.1 && !bIsBoosting && bIsGearReady)
 	{
 		AccelerationAccumulatedTime -= DeltaTime;
-		if (LocalVelocity.X > GetComputedSpeed() && bIsMovingOnGround)
+		if (LocalVelocity.X > (GetComputedSpeed() * FMath::Abs(CurrentBrakeAxis)) && bIsMovingOnGround)
 		{
-			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentBrakeAxis * getAcceleration();
+			ThrottleForce = FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * -getAcceleration();
 		}
 	}
 }
@@ -712,9 +712,9 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 			// Removing error to compute the steering (therefore expected 0.f is 0.f and not 0.0001)
 			const float ApproximateForwardVelocity = FMath::FloorToFloat(FMath::Abs(LocalVelocity.X));
 			const float TargetSteerSpeed = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(ApproximateForwardVelocity) : 1.f;
-			if (FMath::Abs(CurrentAngularSpeed) < TargetSteerSpeed)
+			if (FMath::Abs(CurrentAngularSpeed) < (TargetSteerSpeed * FMath::Abs(CurrentSteeringAxis)))
 			{
-				SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * TorqueAcceleration;
+				SteeringForce = RGUpVector * DirectionFactor * TorqueAcceleration;
 			}
 		}
 	}
@@ -728,7 +728,7 @@ void AAVBaseVehicle::ApplyBrakeInput(float DeltaTime)
 	{
 		if (LocalVelocity.X <= 0.0)
 		{
-			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentThrottleAxis * BrakinDeceleration;
+			ThrottleForce = (ThrottleForce * AccelerationInfluenceRateWhileBraking) + FVector::VectorPlaneProject(RGForwardVector, AvgedNormals) * CurrentThrottleAxis* BrakinDeceleration;
 		}
 		else
 		{
@@ -992,8 +992,8 @@ float AAVBaseVehicle::GetTerminalSpeed() const
 bool AAVBaseVehicle::IsBraking() const
 {
 	// A vehicle is considered to be braking if the intended input direction goes against the current speed
-	return (CurrentBrakeAxis <= -0.1 && LocalVelocity.X > StopThreshold) ||
-		(CurrentThrottleAxis >= 0.1 && LocalVelocity.X < -StopThreshold);
+	return (CurrentBrakeAxis <= -0.1f && LocalVelocity.X > StopThreshold) ||
+		(CurrentThrottleAxis >= 0.1f && LocalVelocity.X < -StopThreshold);
 }
 
 

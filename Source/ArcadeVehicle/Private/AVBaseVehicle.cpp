@@ -972,7 +972,7 @@ void AAVBaseVehicle::WheelsVisuals(FVector& FR, FRotator& FRR, FVector& FL, FRot
 		RLR = FRotator(FMath::RadiansToDegrees(WheelAnimData.WheelAngularPosition.Y), WheelAnimData.WheelCurrentSteer.Y, 0.f);
 		RRR = RLR;
 	}
-	else if(GetWorld()->IsGameWorld())
+	else if (GetWorld()->IsGameWorld())
 	{
 		// Only useful when simulated proxies don't calculate physics
 		FL =  CalcSuspensionSimulatedProxy(FrontLeft, SuspensionFront);

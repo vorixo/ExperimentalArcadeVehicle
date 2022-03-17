@@ -706,7 +706,7 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 			const float TargetSteerSpeed = SteeringActionCurve ? SteeringActionCurve->GetFloatValue(ApproximateForwardVelocity) : 1.f;
 			if (FMath::Abs(CurrentAngularSpeed) < (TargetSteerSpeed * FMath::Abs(CurrentSteeringAxis)))
 			{
-				SteeringForce = RGUpVector * DirectionFactor * TorqueAcceleration;
+				SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * TorqueAcceleration;
 			}
 		}
 	}

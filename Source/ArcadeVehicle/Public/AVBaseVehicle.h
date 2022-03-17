@@ -594,7 +594,7 @@ protected:
 
 public:
 
-#if WITH_EDITOR
+#if WITH_EDITORONLY_DATA
 
 	UPROPERTY(Category = HelperHandler, EditDefaultsOnly, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* BackRightHandle;

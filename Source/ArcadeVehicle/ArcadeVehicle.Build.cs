@@ -39,7 +39,8 @@ public class ArcadeVehicle : ModuleRules
 				"Slate",
 				"SlateCore",
 				"ChaosVehiclesCore",
-				"PhysicsCore"
+				"PhysicsCore",
+				"Chaos"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

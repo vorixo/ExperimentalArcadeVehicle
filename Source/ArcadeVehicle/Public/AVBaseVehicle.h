@@ -2,10 +2,8 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/KismetSystemLibrary.h"
-#include "Engine/Public/DrawDebugHelpers.h"
 #include "AVBaseVehicle.generated.h"
 
 // Suspension
@@ -16,7 +14,6 @@
 #define BACK_RIGHT 3
 #define NUMBER_OF_WHEELS 4
 #define NUMBER_OF_AXLES 2
-
 
 // Misc vars
 #define DEFAULT_GROUND_FRICTION 1
@@ -30,6 +27,7 @@
 #define PRINT_TICK(x) UKismetSystemLibrary::PrintString(this,x,true,false,FLinearColor::Red, 0.f)
 #define PRINT_TICK_LOG(x) UKismetSystemLibrary::PrintString(this,x,true,true,FLinearColor::Red, 0.f)
 
+class Chaos::FRigidBodyHandle_Internal;
 
 #if WITH_EDITOR
 class UArrowComponent;
@@ -280,6 +278,8 @@ protected:
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	virtual void AsyncPhysicsTickActor(float DeltaTime, float SimTime) override;
+
 
 public:	
 
@@ -294,9 +294,6 @@ public:
 
 	/* Prepares the different curves of the vehicle */
 	void SetupVehicleCurves();
-
-	FDelegateHandle OnPhysSceneStepHandle;
-	void PhysSceneStep(FPhysScene* PhysScene, float DeltaTime);
 
 	/* This event is called on every physics tick, including sub-steps. */
 	void PhysicsTick(float SubstepDeltaTime);
@@ -441,6 +438,7 @@ public:
 protected:
 
 	FBodyInstance* RootBodyInstance;
+	Chaos::FRigidBodyHandle_Internal* RigidHandle;
 	static FBodyInstance* GetBodyInstance(UPrimitiveComponent* PrimitiveComponent);
 
 	UPROPERTY(BlueprintReadOnly)

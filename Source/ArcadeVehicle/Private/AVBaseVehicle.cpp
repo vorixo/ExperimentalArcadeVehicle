@@ -4,7 +4,11 @@
 #include "AVBaseVehicle.h"
 #include "CollisionQueryParams.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
-#include "ChaosVehicles/ChaosVehiclesCore/Public/SuspensionUtility.h"
+#include "SuspensionUtility.h"
+#include "Physics/Experimental/PhysScene_Chaos.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
+#include "Chaos/Utilities.h"
+#include "Chaos/Particle/ObjectState.h"
 
 #if WITH_EDITOR
 #include "PhysicsEngine/PhysicsSettings.h"
@@ -133,7 +137,6 @@ AAVBaseVehicle::AAVBaseVehicle()
 
 }
 
-
 /** Util for drawing result of single box trace  */
 void DrawDebugSweptBox(const UWorld* InWorld, FVector const& Start, FVector const& End, FQuat const& CapsuleRot, FVector const& HalfSize, EDrawDebugTrace::Type DrawDebugType, FColor const& Color, bool bPersistentLines, float LifeTime)
 {
@@ -171,7 +174,6 @@ void AAVBaseVehicle::BeginPlay()
 	if (PawnRootComponent != NULL)
 	{
 		RootBodyInstance = PawnRootComponent->GetBodyInstance();
-
 		UWorld* World = GetWorld();
 		if (World->IsGameWorld() && (IsLocallyControlled() || bComputePhysicsSimulatedProxy))
 		{
@@ -179,7 +181,7 @@ void AAVBaseVehicle::BeginPlay()
 			if (PScene)
 			{
 				// Register physics step delegate
-				OnPhysSceneStepHandle = PScene->OnPhysSceneStep.AddUObject(this, &AAVBaseVehicle::PhysSceneStep);
+				PScene->RegisterAsyncPhysicsTickActor(this);
 				InitVehicle();
 				// Very basic sanity check to ensure someone is not adding more wheels than the absolutely necesary
 				ensure(NUMBER_OF_WHEELS == CachedSuspensionInfo.Num());
@@ -190,13 +192,16 @@ void AAVBaseVehicle::BeginPlay()
 	Super::BeginPlay();
 }
 
-
-// Called by OnCalculateCustomPhysics delegate when physics update is initiated
-void AAVBaseVehicle::PhysSceneStep(FPhysScene* PhysScene, float DeltaTime)
+void AddForceAtPosition(Chaos::FRigidBodyHandle_Internal* RigidHandle, FVector Force, FVector Position)
 {
-	PhysicsTick(DeltaTime);
+	if (ensure(RigidHandle))
+	{
+		const Chaos::FVec3 WorldCOM = Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(RigidHandle);
+		const Chaos::FVec3 WorldTorque = Chaos::FVec3::CrossProduct(Position - WorldCOM, Force);
+		RigidHandle->AddForce(Force, false);
+		RigidHandle->AddTorque(WorldTorque, false);
+	}
 }
-
 
 void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 {
@@ -215,8 +220,18 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	}
 #endif
 
+	if (const auto Handle = RootBodyInstance->ActorHandle)
+	{
+		RigidHandle = Handle->GetPhysicsThreadAPI();
+	}
+
+	if (!RigidHandle)
+	{
+		return;
+	}
+
 	// Getting the transformation matrix of the object
-	RGWorldTransform = RootBodyInstance->GetUnrealWorldTransform_AssumesLocked();
+	RGWorldTransform = FTransform(RigidHandle->R(), RigidHandle->X());
 
 	// World Location
 	RGLocation = RGWorldTransform.GetLocation();
@@ -227,11 +242,14 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	RGUpVector = RGWorldTransform.GetUnitAxis(EAxis::Z);
 
 	// Calc velocities and Speed
-	CurrentHorizontalVelocity = RootBodyInstance->GetUnrealWorldVelocity();
+	CurrentHorizontalVelocity = RigidHandle->V();
 	CachedSpeedSized = CurrentHorizontalVelocity.Size();
 	LocalVelocity = RGWorldTransform.InverseTransformVectorNoScale(CurrentHorizontalVelocity);
-	CurrentAngularVelocity = RootBodyInstance->GetUnrealWorldAngularVelocityInRadians();
+	CurrentAngularVelocity = RigidHandle->W();
 	CurrentAngularSpeed = FVector::DotProduct(CurrentAngularVelocity, RGUpVector);
+
+	// Reset runtime particle state
+	RigidHandle->SetObjectState(Chaos::EObjectStateType::Dynamic, true);
 
 	// Moving on top of moving surfaces
 	ComputeBasedMovement();
@@ -253,7 +271,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	if (bIsMovingOnGround)
 	{
 		// Drag/Friction force
-		RootBodyInstance->AddForce(GetLateralFrictionDragForce(), false, false);
+		RigidHandle->AddForce(GetLateralFrictionDragForce(), false);
 	}
 	
 	/************************************************************************/
@@ -323,25 +341,25 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 		ThrottleForce = bIsMovingOnGround ? ThrottleForce - ThrottleAdjustmentRatio : ThrottleForce;
 	}
 
-		
 	// Forward and backwards speed work with 0 damping.
-	RootBodyInstance->LinearDamping = bIsMovingOnGround ? 0.f : LinearDampingAir;
-	RootBodyInstance->AngularDamping = AngularDamping;
-	RootBodyInstance->UpdateDampingProperties();
+	RigidHandle->SetLinearEtherDrag(bIsMovingOnGround ? 0.f : LinearDampingAir);
+	RigidHandle->SetAngularEtherDrag(AngularDamping);
 
 
 	/************************************************************************/
 	/* Apply movement forces                                                */
 	/************************************************************************/
-	RootBodyInstance->AddTorqueInRadians(SteeringForce, false, true);
+	
+	RigidHandle->AddTorque(Chaos::Utilities::ComputeWorldSpaceInertia(RigidHandle->R() * RigidHandle->RotationOfMass(), RigidHandle->I()) * SteeringForce, false);
+
 	
 	if (bTiltedThrottle)
 	{
-		RootBodyInstance->AddForceAtPosition(ThrottleForce, GetOffsetedCenterOfVehicle(), false, false);
+		AddForceAtPosition(RigidHandle, ThrottleForce, GetOffsetedCenterOfVehicle());
 	}
 	else
 	{
-		RootBodyInstance->AddForce(ThrottleForce, false);
+		RigidHandle->AddForce(ThrottleForce, false);
 	}
 	
 	// Vehicles can't go beyond the terminal speed. This code snippet also smooths out current velocity towards max speed leaving some room for physical enviro impulses
@@ -349,7 +367,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		const float BlendAlpha = (CachedSpeedSized - GetAbsMaxSpeedAxisIndependent()) / (GetTerminalSpeed() - GetAbsMaxSpeedAxisIndependent());
 		const float TerminalVelocityPreemptionFinalForce = CachedSpeedSized > GetTerminalSpeed() ? BIG_NUMBER : FMath::Lerp(0.f, GetTerminalSpeed() + TERMINAL_VELOCITY_PREEMPTION_FORCE_OFFSET, BlendAlpha);
-		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
+		RigidHandle->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
 	
 	// We also want to help the vehicle get into an idle state
@@ -357,7 +375,7 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	{
 		const float BlendAlpha = CachedSpeedSized/(StopThreshold);
 		const float TerminalVelocityPreemptionFinalForce = FMath::Lerp(0.f, IDLE_VEHICLE_FORCE, BlendAlpha);
-		RootBodyInstance->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
+		RigidHandle->AddForce(-CurrentHorizontalVelocity.GetSafeNormal() * TerminalVelocityPreemptionFinalForce, false);
 	}
 	
 	/************************************************************************/
@@ -379,7 +397,6 @@ void AAVBaseVehicle::PhysicsTick(float SubstepDeltaTime)
 	ThrottleForce = FVector::ZeroVector;
 	SteeringForce = FVector::ZeroVector;
 }
-
 
 float AAVBaseVehicle::GetSuspensionForceMagnitude(const FCachedSuspensionInfo& InCachedInfo, float DeltaTime) const
 {									
@@ -458,7 +475,7 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 
 				const FVector FinalForce = (OutHit.ImpactNormal * ForceMagnitude);
 
-				RootBodyInstance->AddForceAtPosition(FinalForce, WheelRestingWorldLocation, false);
+				AddForceAtPosition(RigidHandle, FinalForce, WheelRestingWorldLocation);
 				
 				// Storing resting force for axle calculus later
 				sHitInfo.SusForce = Susp.SuspensionData.SuspensionLoadRatio * ForceMagnitude + (1.f - Susp.SuspensionData.SuspensionLoadRatio) * Susp.RestingForce;
@@ -488,8 +505,8 @@ void AAVBaseVehicle::ApplySuspensionForces(float DeltaTime)
 			const FVector ForceVector0 = RGUpVector * ForceDiffOnAxleF * RollbarScaling;
 			const FVector ForceVector1 = RGUpVector * ForceDiffOnAxleF * -RollbarScaling;
 
-			RootBodyInstance->AddForceAtPosition(ForceVector0, HitInfos[WheelIdxA].WheelRestingWorldLocation, false);
-			RootBodyInstance->AddForceAtPosition(ForceVector1, HitInfos[WheelIdxB].WheelRestingWorldLocation, false);
+			AddForceAtPosition(RigidHandle, ForceVector0, HitInfos[WheelIdxA].WheelRestingWorldLocation);
+			AddForceAtPosition(RigidHandle, ForceVector1, HitInfos[WheelIdxB].WheelRestingWorldLocation);
 		}
 	}
 
@@ -586,7 +603,8 @@ void AAVBaseVehicle::ComputeBasedMovement()
 			FVector const DeltaPosition = NewWorldPos - RGLocation;
 			NewTransform.AddToTranslation(DeltaPosition);
 
-			RootBodyInstance->SetBodyTransform(NewTransform, ETeleportType::None);
+			RigidHandle->SetX(NewTransform.GetLocation(), false);
+			RigidHandle->SetR(NewTransform.GetRotation(), false);
 		}
 		
 		BasedPlatformInfo.Location = NewBasedLocation;
@@ -691,11 +709,11 @@ void AAVBaseVehicle::ApplySteeringInput(float DeltaTime)
 			const float ControlRatio = AirControlCurve ? AirControlCurve->GetFloatValue(TimeFalling) : 1.f;
 			if (bOrientRotationToMovementInAir)
 			{
-				RootBodyInstance->AddForce(((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector, false, false);
+				RigidHandle->AddForce(((FVector::DotProduct(RGRightVector, CurrentHorizontalVelocity) * -1.f) * (ORIENT_ROTATION_VELOCITY_MAX_RATE * OrientRotationToMovementInAirInfluenceRate)) * RGRightVector, false);
 			}
 			else
 			{
-				RootBodyInstance->AddForce(CurrentSteeringAxis * RGRightVector * AirStrafeAcceleration * ControlRatio);
+				RigidHandle->AddForce(CurrentSteeringAxis * RGRightVector * AirStrafeAcceleration * ControlRatio, false);
 			}
 			SteeringForce = RGUpVector * DirectionFactor * CurrentSteeringAxis * AirTorqueAcceleration * ControlRatio;
 		}
@@ -814,7 +832,7 @@ void AAVBaseVehicle::ApplyGravityForce(float DeltaTime)
 
 	// Gravity force
 	FVector GravityForce = VehicleAlignDirection * (bIsMovingOnGround ? GravityGround : GravityAir);
-	RootBodyInstance->AddForce(GravityForce, false, false);
+	RigidHandle->AddForce(GravityForce, false);
 
 
 	// Air control + unflipping forces + predictive landing
@@ -1082,11 +1100,17 @@ void AAVBaseVehicle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		if (PScene)
 		{
 			// Unregister physics step delegate
-			PScene->OnPhysSceneStep.Remove(OnPhysSceneStepHandle);
+			PScene->UnregisterAsyncPhysicsTickActor(this);
 		}
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void AAVBaseVehicle::AsyncPhysicsTickActor(float DeltaTime, float SimTime)
+{
+	Super::AsyncPhysicsTickActor(DeltaTime, SimTime);
+	PhysicsTick(DeltaTime);
 }
 
 

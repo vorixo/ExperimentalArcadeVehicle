@@ -12,6 +12,7 @@
 
 #if WITH_EDITOR
 #include "PhysicsEngine/PhysicsSettings.h"
+#include "UObject/ObjectSaveContext.h"
 #endif
 
 static int32 bDebugInfo = 0;
@@ -72,7 +73,7 @@ AAVBaseVehicle::AAVBaseVehicle()
 	OrientRotationToMovementInAirInfluenceRate = 1.f;
 	AccelerationInfluenceRateWhileBraking = 0.3f;
 	SteeringDecelerationSideVelocityFactorScale = 40.f;
-	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4;
+	SteeringDecelerationSideVelocityInterpolationSpeed = 0.4f;
 	SwapGearDirectionDelay = 0.4f;
 	StopThreshold = 40.f;
 	InfluencialDirection = 0.f;
@@ -1051,9 +1052,9 @@ void AAVBaseVehicle::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 }
 
 
-void AAVBaseVehicle::PreSave(const class ITargetPlatform* TargetPlatform)
+void AAVBaseVehicle::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {
-	Super::PreSave(TargetPlatform);
+	Super::PreSave(ObjectSaveContext);
 	BackRight = BackRightHandle->GetRelativeLocation();
 	FrontRight = FrontRightHandle->GetRelativeLocation();
 	FrontLeft = FrontLeftHandle->GetRelativeLocation();

@@ -194,15 +194,15 @@ struct ARCADEVEHICLE_API FBasedPlatformInfo
 	
 	/** Component we are based on */
 	UPROPERTY()
-	UPrimitiveComponent* MovementBase;
+	UPrimitiveComponent* MovementBase = nullptr;
 
 	/** Location relative to MovementBase. */
 	UPROPERTY()
-	FVector_NetQuantize100 Location;
+	FVector_NetQuantize100 Location = FVector::ZeroVector;
 
 	/** Rotation relative to MovementBase. */
 	UPROPERTY()
-	FQuat Rotation;
+	FQuat Rotation = FQuat::Identity;
 
 };
 
@@ -739,7 +739,7 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
+	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	void UpdateHandlersTransformCDO();
 #endif // WITH_EDITOR
